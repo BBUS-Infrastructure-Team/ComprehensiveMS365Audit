@@ -29,5 +29,6 @@ Export-ModuleMember -Function @(
     'Export-M365ComplianceGapsHtmlReport',
     'Export-M365AuditExcelReport',
     'Export-M365ServiceAuditHtmlReport'
-    'Export-M365ServiceAuditJsonReport'
+    'Export-M365ServiceAuditJsonReport',
+    'Get-ComprehensiveM365RoleAudit_old'
 )

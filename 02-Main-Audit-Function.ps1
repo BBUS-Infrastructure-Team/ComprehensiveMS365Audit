@@ -133,23 +133,16 @@ function Get-ComprehensiveM365RoleAudit {
         
         # 8. Power Platform Roles (Windows PowerShell 5.x only)
         if ($IncludePowerPlatform -or $IncludeAll) {
-            if ($PSVersionTable.PSVersion.Major -eq 5 -and $IsWindows -ne $false) {
-                Write-Host "Auditing Power Platform roles..." -ForegroundColor Cyan
-                try {
-                    # Use the Azure AD Power Platform roles function since native Power Platform has limited cert auth
-                    $powerPlatformRoles = Get-PowerPlatformAzureADRoleAudit -TenantId $TenantId -ClientId $ClientId -CertificateThumbprint $CertificateThumbprint
-                    $allResults += $powerPlatformRoles
-                    Write-Host "✓ Found $($powerPlatformRoles.Count) Power Platform role assignments" -ForegroundColor Green
-                }
-                catch {
-                    Write-Warning "Power Platform audit failed: $($_.Exception.Message)"
-                    Write-Host "Note: Power Platform has limited certificate authentication support" -ForegroundColor Yellow
-                }
+            Write-Host "Auditing Power Platform roles..." -ForegroundColor Cyan
+            try {
+                # Use the Azure AD Power Platform roles function since native Power Platform has limited cert auth
+                $powerPlatformRoles = Get-PowerPlatformAzureADRoleAudit -TenantId $TenantId -ClientId $ClientId -CertificateThumbprint $CertificateThumbprint
+                $allResults += $powerPlatformRoles
+                Write-Host "✓ Found $($powerPlatformRoles.Count) Power Platform role assignments" -ForegroundColor Green
             }
-            else {
-                Write-Warning "Power Platform audit skipped - requires Windows PowerShell 5.x"
-                Write-Host "Current environment: PowerShell $($PSVersionTable.PSVersion) on $($PSVersionTable.Platform)" -ForegroundColor Yellow
-                Write-Host "Consider running Power Platform audit separately on Windows machine" -ForegroundColor Yellow
+            catch {
+                Write-Warning "Power Platform audit failed: $($_.Exception.Message)"
+                Write-Host "Note: Power Platform has limited certificate authentication support" -ForegroundColor Yellow
             }
         }
         
@@ -345,3 +338,4 @@ function Get-ComprehensiveM365RoleAudit {
         return @()
     }
 }
+

@@ -1,7 +1,6 @@
 # 06-Compliance-Functions.ps1
 # Microsoft Purview/Compliance role audit functions - Certificate Authentication Only
 # Fixed to use script-level variables from Set-M365AuditCredentials
-#Requires -Modules @{ModuleName = 'ExchangeOnlineManagement'; ModuleVersion = '3.8.0'}
 function Get-PurviewRoleAudit {
     param(
         [Parameter(Mandatory = $true)]
@@ -39,8 +38,42 @@ function Get-PurviewRoleAudit {
         # Write-Host "  Certificate Thumbprint: $($script:AppConfig.CertificateThumbprint)" -ForegroundColor Gray
         
         # Check if connected to Security & Compliance Center
-        $session = Get-PSSession | Where-Object { $_.ComputerName -like "*compliance*" -and $_.State -eq "Opened" }
-        if (-not $session) {
+        $EXOsession = Get-ConnectionInformation | Where-Object { $_.ConnectionUri -like "outlook*" -and $_.State -eq "Connected" }
+        $IPSSsession = Get-ConnectionInformation | Where-Object { $_.ConnectionUri -like "*compliance" -and $_.State -eq 'Connected'}
+
+        If (-not $EXOsession) {
+            Write-Host 'Connecting to Exchange Online' -ForegroundColor Yellow
+
+            try {
+                if ($IsWindows) {
+                    Connect-ExchangeOnline `
+                        -AppId $script:AppConfig.ClientId `
+                        -CertificateThumbprint $script:AppConfig.CertificateThumbprint `
+                        -Organization $Organization `
+                        -ShowBanner:$false
+                } elseIf ($IsLinux -or $IsMacOS) {
+                    Connect-ExchangeOnline `
+                        -AppId $script:AppConfig.ClientId `
+                        -Certificate $script:AppConfig.Certificate `
+                        -Organization $Organization `
+                        -ShowBanner:$false
+                    
+                } 
+            } catch {
+                Write-Error "Exchange Online certificate authentication failed: $($_.Exception.Message)"
+                Write-Host "Troubleshooting steps:" -ForegroundColor Yellow
+                Write-Host "• Ensure certificate is uploaded to Azure AD app registration" -ForegroundColor White
+                Write-Host "• Verify app has required Compliance permissions" -ForegroundColor White
+                Write-Host "• Check certificate expiration and validity" -ForegroundColor White
+                Write-Host "• Run: Get-M365AuditCurrentConfig to verify configuration" -ForegroundColor White
+                return $results
+            }
+        } else {
+            Write-Host "✓ Already connected to Exchange Online" -ForegroundColor Green
+
+        }
+
+        If (-Not $IPSSsession) {
             Write-Host "Connecting to Security & Compliance Center with certificate authentication..." -ForegroundColor Yellow
             
             try {
