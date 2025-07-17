@@ -27,7 +27,7 @@ function Get-AzureADRoleAudit {
         if (-not $context -or $context.AuthType -ne "AppOnly") {
             Write-Host "Connecting to Microsoft Graph with certificate authentication..." -ForegroundColor Yellow
             
-            Connect-MgGraph -TenantId $script:AppConfig.TenantId -ClientId $script:AppConfig.ClientId -CertificateThumbprint $script:AppConfig.CertificateThumbprint
+            Connect-MgGraph -TenantId $script:AppConfig.TenantId -ClientId $script:AppConfig.ClientId -CertificateThumbprint $script:AppConfig.CertificateThumbprint -NoWelcome
             
             # Verify app-only authentication
             $context = Get-MgContext
