@@ -134,7 +134,7 @@ function Get-ExchangeRoleAudit {
                 
                 # Try as user first
                 try {
-                    $user = Get-MgUser -UserId $assignment.PrincipalId -ErrorAction SilentlyContinue
+                    $user = Get-MgUser -UserId $assignment.PrincipalId -Property "UserPrincipalName,DisplayName,AccountEnabled,SignInActivity,OnPremisesSyncEnabled" -ErrorAction SilentlyContinue
                     if ($user) {
                         $principalInfo.UserPrincipalName = $user.UserPrincipalName
                         $principalInfo.DisplayName = $user.DisplayName
@@ -145,25 +145,16 @@ function Get-ExchangeRoleAudit {
                     }
                 }
                 catch { }
-                
+
                 # Try as group if not user (important for hybrid environments)
                 if ($principalInfo.PrincipalType -eq "Unknown") {
                     try {
-                        $group = Get-MgGroup -GroupId $assignment.PrincipalId -ErrorAction SilentlyContinue
+                        $group = Get-MgGroup -GroupId $assignment.PrincipalId -Property "Mail,DisplayName,OnPremisesSyncEnabled" -ErrorAction SilentlyContinue
                         if ($group) {
                             $principalInfo.UserPrincipalName = $group.Mail
                             $principalInfo.DisplayName = $group.DisplayName
                             $principalInfo.PrincipalType = "Group"
                             $principalInfo.OnPremisesSyncEnabled = $group.OnPremisesSyncEnabled
-                            
-                            # Get group member count for context
-                            try {
-                                $members = Get-MgGroupMember -GroupId $group.Id -All -ErrorAction SilentlyContinue
-                                $principalInfo.GroupMemberCount = $members.Count
-                            }
-                            catch {
-                                $principalInfo.GroupMemberCount = "Unknown"
-                            }
                         }
                     }
                     catch { }
@@ -280,18 +271,21 @@ function Get-ExchangeRoleAudit {
                         $userEnabled = $null
                         $lastSignIn = $null
                         $onPremisesSyncEnabled = $null
-                        
+
                         if ($isUser -and $member.ExternalDirectoryObjectId) {
                             try {
-                                $graphUser = Get-MgUser -UserId $member.ExternalDirectoryObjectId -ErrorAction SilentlyContinue
+                                $graphUser = Get-MgUser -UserId $member.ExternalDirectoryObjectId -Property "AccountEnabled,SignInActivity,OnPremisesSyncEnabled,OnPremisesDistinguishedName" -ErrorAction SilentlyContinue
                                 if ($graphUser) {
                                     $userEnabled = $graphUser.AccountEnabled
                                     $lastSignIn = $graphUser.SignInActivity.LastSignInDateTime
                                     $onPremisesSyncEnabled = $graphUser.OnPremisesSyncEnabled
+                                    
+                                    # Debug output to verify hybrid detection
+                                    Write-Verbose "User $($member.PrimarySmtpAddress): OnPremSync = $onPremisesSyncEnabled"
                                 }
                             }
                             catch {
-                                # Expected if Graph connection issues
+                                Write-Verbose "Could not retrieve Graph data for user $($member.PrimarySmtpAddress): $($_.Exception.Message)"
                             }
                         }
                         
