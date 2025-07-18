@@ -2,6 +2,7 @@
 Get-ChildItem -Path "$PSScriptRoot" -Filter "*.ps1" | ForEach-Object {
     . "$($_.FullName)"
 }
+. "$PSScriptRoot/Testing_and_Examples/test.ps1"
 
 Export-ModuleMember -Function @(
     'Set-M365AuditCredentials',
@@ -30,5 +31,7 @@ Export-ModuleMember -Function @(
     'Export-M365AuditExcelReport',
     'Export-M365ServiceAuditHtmlReport'
     'Export-M365ServiceAuditJsonReport',
-    'Get-ComprehensiveM365RoleAudit_old'
+    'Get-ComprehensiveM365RoleAudit_old',
+    'Export-M365RoleAnalysisHtmlReport',
+    'Export-M365ComplianceGapsHtmlReport'
 )

@@ -1,13 +1,16 @@
- # 09-Intune-Functions.ps1
-# Microsoft Intune/Endpoint Manager role audit functions
-# Certificate-based authentication ONLY - No interactive authentication
+# 09-Intune-Functions.ps1
+# Enhanced Microsoft Intune Role Audit Function focused ONLY on administrative roles
+# Removed: Policy ownership tracking, configuration ownership tracking
+# Updated Get-IntuneRoleAudit function for 09-Intune-Functions.ps1
+
 function Get-IntuneRoleAudit {
     param(
         [string]$TenantId,
         [string]$ClientId,
         [string]$CertificateThumbprint,
         [switch]$IncludePIM,
-        [switch]$IncludeAnalysis
+        [switch]$IncludeAnalysis,
+        [switch]$IncludeAzureADRoles  # New parameter to control inclusion of overarching roles
     )
     
     $results = @()
@@ -22,11 +25,6 @@ function Get-IntuneRoleAudit {
         if (-not $script:AppConfig.UseAppAuth -or $script:AppConfig.AuthType -ne "Certificate") {
             throw "Certificate authentication is required for Intune role audit. Use Set-M365AuditCertCredentials first."
         }
-        
-        # Write-Host "Using certificate-based authentication for Intune audit:" -ForegroundColor Cyan
-        # Write-Host "  Tenant ID: $($script:AppConfig.TenantId)" -ForegroundColor Gray
-        # Write-Host "  Client ID: $($script:AppConfig.ClientId)" -ForegroundColor Gray
-        # Write-Host "  Certificate Thumbprint: $($script:AppConfig.CertificateThumbprint)" -ForegroundColor Gray
         
         # Connect to Microsoft Graph with certificate authentication
         $context = Get-MgContext
@@ -43,7 +41,6 @@ function Get-IntuneRoleAudit {
             
             Write-Host "✓ Connected with certificate authentication" -ForegroundColor Green
             Write-Host "  App Name: $($context.AppName)" -ForegroundColor Gray
-            Write-Host "  Authentication Type: $($context.AuthType)" -ForegroundColor Gray
         }
         else {
             Write-Host "✓ Already connected to Microsoft Graph with app-only authentication" -ForegroundColor Green
@@ -65,25 +62,45 @@ function Get-IntuneRoleAudit {
             throw "Required permissions not granted or certificate authentication failed"
         }
         
-        # Get Intune-specific Azure AD roles first
-        Write-Host "Retrieving Intune-related Azure AD roles..." -ForegroundColor Cyan
-        
-        $intuneAzureRoles = @(
-            "Intune Service Administrator",
+        # === ENHANCED AZURE AD ROLE FILTERING ===
+        # Intune-specific Azure AD roles (NOT overarching roles)
+        $intuneSpecificRoles = @(
             "Device Managers", 
             "Device Users",
             "Device Administrators",
             "Endpoint Privilege Manager Administrator"
         )
         
+        # Overarching roles that should only appear in Azure AD audit
+        $overarchingRoles = @(
+            "Global Administrator",
+            "Intune Service Administrator",
+            "Security Administrator",
+            "Security Reader",
+            "Cloud Application Administrator",
+            "Application Administrator",
+            "Privileged Authentication Administrator",
+            "Privileged Role Administrator"
+        )
+        
+        # Determine which roles to include based on parameter
+        $rolesToInclude = if ($IncludeAzureADRoles) {
+            $intuneSpecificRoles + $overarchingRoles
+        } else {
+            $intuneSpecificRoles
+        }
+        
+        # Get Intune-related Azure AD administrative roles first
+        Write-Host "Retrieving Intune-related Azure AD administrative roles..." -ForegroundColor Cyan
+        
         $intuneRoleDefinitions = @()
         
         try {
             $roleDefinitions = Get-MgRoleManagementDirectoryRoleDefinition
-            $intuneRoleDefinitions = $roleDefinitions | Where-Object { $_.DisplayName -in $intuneAzureRoles }
+            $intuneRoleDefinitions = $roleDefinitions | Where-Object { $_.DisplayName -in $rolesToInclude }
             $assignments = Get-MgRoleManagementDirectoryRoleAssignment | Where-Object { $_.RoleDefinitionId -in $intuneRoleDefinitions.Id }
             
-            Write-Host "Found $($assignments.Count) active Azure AD Intune role assignments" -ForegroundColor Green
+            Write-Host "Found $($assignments.Count) active Azure AD Intune administrative role assignments" -ForegroundColor Green
             
             foreach ($assignment in $assignments) {
                 try {
@@ -92,6 +109,9 @@ function Get-IntuneRoleAudit {
                     
                     $role = $intuneRoleDefinitions | Where-Object { $_.Id -eq $assignment.RoleDefinitionId }
                     
+                    # Determine role scope for enhanced deduplication
+                    $roleScope = if ($role.DisplayName -in $overarchingRoles) { "Overarching" } else { "Service-Specific" }
+                    
                     $results += [PSCustomObject]@{
                         Service = "Microsoft Intune"
                         UserPrincipalName = $user.UserPrincipalName
@@ -99,6 +119,7 @@ function Get-IntuneRoleAudit {
                         UserId = $user.Id
                         RoleName = $role.DisplayName
                         RoleDefinitionId = $assignment.RoleDefinitionId
+                        RoleScope = $roleScope  # New property for enhanced deduplication
                         AssignmentType = "Azure AD Role"
                         AssignedDateTime = $assignment.CreatedDateTime
                         UserEnabled = $user.AccountEnabled
@@ -107,6 +128,7 @@ function Get-IntuneRoleAudit {
                         AssignmentId = $assignment.Id
                         RoleType = "AzureAD"
                         AuthenticationType = "Certificate"
+                        PrincipalType = "User"
                     }
                 }
                 catch {
@@ -115,102 +137,114 @@ function Get-IntuneRoleAudit {
             }
         }
         catch {
-            Write-Warning "Error retrieving Intune Azure AD roles: $($_.Exception.Message)"
+            Write-Warning "Error retrieving Intune Azure AD administrative roles: $($_.Exception.Message)"
         }
         
         # Get PIM eligible assignments for Intune Azure AD roles
-        Write-Host "Retrieving PIM eligible assignments for Intune roles..." -ForegroundColor Cyan
-        try {
-            $intuneRoleIds = $intuneRoleDefinitions.Id
-            $eligibleAssignments = Get-MgRoleManagementDirectoryRoleEligibilitySchedule | Where-Object { 
-                $_.RoleDefinitionId -in $intuneRoleIds 
-            }
-            
-            Write-Host "Found $($eligibleAssignments.Count) PIM eligible assignments for Intune roles" -ForegroundColor Green
-            
-            foreach ($assignment in $eligibleAssignments) {
-                try {
-                    $user = Get-MgUser -UserId $assignment.PrincipalId -ErrorAction SilentlyContinue
-                    if (-not $user) { continue }
-                    
-                    $role = $intuneRoleDefinitions | Where-Object { $_.Id -eq $assignment.RoleDefinitionId }
-                    
-                    $results += [PSCustomObject]@{
-                        Service = "Microsoft Intune"
-                        UserPrincipalName = $user.UserPrincipalName
-                        DisplayName = $user.DisplayName
-                        UserId = $user.Id
-                        RoleName = $role.DisplayName
-                        RoleDefinitionId = $assignment.RoleDefinitionId
-                        AssignmentType = "Eligible (PIM)"
-                        AssignedDateTime = $assignment.CreatedDateTime
-                        UserEnabled = $user.AccountEnabled
-                        LastSignIn = $user.SignInActivity.LastSignInDateTime
-                        Scope = $assignment.DirectoryScopeId
-                        AssignmentId = $assignment.Id
-                        RoleType = "AzureAD"
-                        PIMEndDateTime = $assignment.ScheduleInfo.Expiration.EndDateTime
-                        PIMStartDateTime = $assignment.ScheduleInfo.Expiration.StartDateTime
-                        PIMDuration = $assignment.ScheduleInfo.Expiration.Duration
-                        AuthenticationType = "Certificate"
+        if ($IncludePIM) {
+            Write-Host "Retrieving PIM eligible assignments for Intune administrative roles..." -ForegroundColor Cyan
+            try {
+                $intuneRoleIds = $intuneRoleDefinitions.Id
+                $eligibleAssignments = Get-MgRoleManagementDirectoryRoleEligibilitySchedule | Where-Object { 
+                    $_.RoleDefinitionId -in $intuneRoleIds 
+                }
+                
+                Write-Host "Found $($eligibleAssignments.Count) PIM eligible assignments for Intune roles" -ForegroundColor Green
+                
+                foreach ($assignment in $eligibleAssignments) {
+                    try {
+                        $user = Get-MgUser -UserId $assignment.PrincipalId -ErrorAction SilentlyContinue
+                        if (-not $user) { continue }
+                        
+                        $role = $intuneRoleDefinitions | Where-Object { $_.Id -eq $assignment.RoleDefinitionId }
+                        
+                        # Determine role scope for enhanced deduplication
+                        $roleScope = if ($role.DisplayName -in $overarchingRoles) { "Overarching" } else { "Service-Specific" }
+                        
+                        $results += [PSCustomObject]@{
+                            Service = "Microsoft Intune"
+                            UserPrincipalName = $user.UserPrincipalName
+                            DisplayName = $user.DisplayName
+                            UserId = $user.Id
+                            RoleName = $role.DisplayName
+                            RoleDefinitionId = $assignment.RoleDefinitionId
+                            RoleScope = $roleScope  # New property for enhanced deduplication
+                            AssignmentType = "Eligible (PIM)"
+                            AssignedDateTime = $assignment.CreatedDateTime
+                            UserEnabled = $user.AccountEnabled
+                            LastSignIn = $user.SignInActivity.LastSignInDateTime
+                            Scope = $assignment.DirectoryScopeId
+                            AssignmentId = $assignment.Id
+                            RoleType = "AzureAD"
+                            PIMEndDateTime = $assignment.ScheduleInfo.Expiration.EndDateTime
+                            PIMStartDateTime = $assignment.ScheduleInfo.Expiration.StartDateTime
+                            PIMDuration = $assignment.ScheduleInfo.Expiration.Duration
+                            AuthenticationType = "Certificate"
+                            PrincipalType = "User"
+                        }
+                    }
+                    catch {
+                        Write-Verbose "Error processing PIM Intune assignment: $($_.Exception.Message)"
                     }
                 }
-                catch {
-                    Write-Verbose "Error processing PIM Intune assignment: $($_.Exception.Message)"
-                }
             }
-        }
-        catch {
-            Write-Verbose "Error retrieving PIM eligible assignments for Intune: $($_.Exception.Message)"
-            Write-Host "Note: PIM may require additional permissions or licensing" -ForegroundColor Yellow
-        }
+            catch {
+                Write-Verbose "Error retrieving PIM eligible assignments for Intune: $($_.Exception.Message)"
+                Write-Host "Note: PIM may require additional permissions or licensing" -ForegroundColor Yellow
+            }
 
-        # Get PIM active assignments for Intune roles
-        Write-Host "Retrieving PIM active assignments for Intune roles..." -ForegroundColor Cyan
-        try {
-            $activeAssignments = Get-MgRoleManagementDirectoryRoleAssignmentSchedule | Where-Object { 
-                $_.RoleDefinitionId -in $intuneRoleIds -and $_.AssignmentType -eq "Activated"
-            }
-            
-            Write-Host "Found $($activeAssignments.Count) PIM active assignments for Intune roles" -ForegroundColor Green
-            
-            foreach ($assignment in $activeAssignments) {
-                try {
-                    $user = Get-MgUser -UserId $assignment.PrincipalId -ErrorAction SilentlyContinue
-                    if (-not $user) { continue }
-                    
-                    $role = $intuneRoleDefinitions | Where-Object { $_.Id -eq $assignment.RoleDefinitionId }
-                    
-                    $results += [PSCustomObject]@{
-                        Service = "Microsoft Intune"
-                        UserPrincipalName = $user.UserPrincipalName
-                        DisplayName = $user.DisplayName
-                        UserId = $user.Id
-                        RoleName = $role.DisplayName
-                        RoleDefinitionId = $assignment.RoleDefinitionId
-                        AssignmentType = "Active (PIM Activated)"
-                        AssignedDateTime = $assignment.CreatedDateTime
-                        UserEnabled = $user.AccountEnabled
-                        LastSignIn = $user.SignInActivity.LastSignInDateTime
-                        Scope = $assignment.DirectoryScopeId
-                        AssignmentId = $assignment.Id
-                        RoleType = "AzureAD"
-                        PIMActivatedDateTime = $assignment.ActivatedDateTime
-                        PIMEndDateTime = $assignment.ScheduleInfo.Expiration.EndDateTime
-                        AuthenticationType = "Certificate"
+            # Get PIM active assignments for Intune roles
+            Write-Host "Retrieving PIM active assignments for Intune administrative roles..." -ForegroundColor Cyan
+            try {
+                $activeAssignments = Get-MgRoleManagementDirectoryRoleAssignmentSchedule | Where-Object { 
+                    $_.RoleDefinitionId -in $intuneRoleIds -and $_.AssignmentType -eq "Activated"
+                }
+                
+                Write-Host "Found $($activeAssignments.Count) PIM active assignments for Intune roles" -ForegroundColor Green
+                
+                foreach ($assignment in $activeAssignments) {
+                    try {
+                        $user = Get-MgUser -UserId $assignment.PrincipalId -ErrorAction SilentlyContinue
+                        if (-not $user) { continue }
+                        
+                        $role = $intuneRoleDefinitions | Where-Object { $_.Id -eq $assignment.RoleDefinitionId }
+                        
+                        # Determine role scope for enhanced deduplication
+                        $roleScope = if ($role.DisplayName -in $overarchingRoles) { "Overarching" } else { "Service-Specific" }
+                        
+                        $results += [PSCustomObject]@{
+                            Service = "Microsoft Intune"
+                            UserPrincipalName = $user.UserPrincipalName
+                            DisplayName = $user.DisplayName
+                            UserId = $user.Id
+                            RoleName = $role.DisplayName
+                            RoleDefinitionId = $assignment.RoleDefinitionId
+                            RoleScope = $roleScope  # New property for enhanced deduplication
+                            AssignmentType = "Active (PIM Activated)"
+                            AssignedDateTime = $assignment.CreatedDateTime
+                            UserEnabled = $user.AccountEnabled
+                            LastSignIn = $user.SignInActivity.LastSignInDateTime
+                            Scope = $assignment.DirectoryScopeId
+                            AssignmentId = $assignment.Id
+                            RoleType = "AzureAD"
+                            PIMActivatedDateTime = $assignment.ActivatedDateTime
+                            PIMEndDateTime = $assignment.ScheduleInfo.Expiration.EndDateTime
+                            AuthenticationType = "Certificate"
+                            PrincipalType = "User"
+                        }
+                    }
+                    catch {
+                        Write-Verbose "Error processing PIM active Intune assignment: $($_.Exception.Message)"
                     }
                 }
-                catch {
-                    Write-Verbose "Error processing PIM active Intune assignment: $($_.Exception.Message)"
-                }
             }
-        }
-        catch {
-            Write-Verbose "Error retrieving PIM active assignments for Intune: $($_.Exception.Message)"
+            catch {
+                Write-Verbose "Error retrieving PIM active assignments for Intune: $($_.Exception.Message)"
+            }
         }
         
-        # Get Intune RBAC role definitions
-        Write-Host "Retrieving Intune RBAC role definitions..." -ForegroundColor Cyan
+        # Get Intune RBAC role definitions (ADMINISTRATIVE ROLES ONLY)
+        Write-Host "Retrieving Intune RBAC administrative role definitions..." -ForegroundColor Cyan
         try {
             $intuneRBACRoleDefinitions = Invoke-MgGraphRequest -Uri "https://graph.microsoft.com/v1.0/deviceManagement/roleDefinitions" -Method GET
             Write-Host "Found $($intuneRBACRoleDefinitions.value.Count) Intune role definitions" -ForegroundColor Green
@@ -220,11 +254,11 @@ function Get-IntuneRoleAudit {
             throw "Certificate authentication may lack required permissions"
         }
         
-        # Get Intune RBAC role assignments
-        Write-Host "Retrieving Intune RBAC role assignments..." -ForegroundColor Cyan
+        # Get Intune RBAC role assignments (ADMINISTRATIVE ASSIGNMENTS ONLY)
+        Write-Host "Retrieving Intune RBAC administrative role assignments..." -ForegroundColor Cyan
         try {
             $intuneRoleAssignments = Invoke-MgGraphRequest -Uri "https://graph.microsoft.com/v1.0/deviceManagement/roleAssignments" -Method GET
-            Write-Host "Found $($intuneRoleAssignments.value.Count) Intune role assignments" -ForegroundColor Green
+            Write-Host "Found $($intuneRoleAssignments.value.Count) Intune administrative role assignments" -ForegroundColor Green
             
             foreach ($assignment in $intuneRoleAssignments.value) {
                 try {
@@ -242,7 +276,7 @@ function Get-IntuneRoleAudit {
                         }
                     }
                     
-                    # Process each member in the assignment
+                    # Process each member in the assignment (ADMINISTRATIVE ROLE HOLDERS ONLY)
                     foreach ($member in $assignment.members) {
                         try {
                             # Try to get user details
@@ -251,6 +285,7 @@ function Get-IntuneRoleAudit {
                             $userPrincipalName = "Unknown"
                             $userEnabled = $null
                             $lastSignIn = $null
+                            $principalType = "Unknown"
                             
                             # Member could be a user, group, or service principal
                             try {
@@ -260,6 +295,7 @@ function Get-IntuneRoleAudit {
                                     $userPrincipalName = $user.UserPrincipalName
                                     $userEnabled = $user.AccountEnabled
                                     $lastSignIn = $user.SignInActivity.LastSignInDateTime
+                                    $principalType = "User"
                                 }
                                 else {
                                     # Try as group
@@ -267,6 +303,7 @@ function Get-IntuneRoleAudit {
                                     if ($group) {
                                         $userDisplayName = $group.DisplayName + " (Group)"
                                         $userPrincipalName = $group.Mail
+                                        $principalType = "Group"
                                     }
                                     else {
                                         # Try as service principal
@@ -274,6 +311,7 @@ function Get-IntuneRoleAudit {
                                         if ($sp) {
                                             $userDisplayName = $sp.DisplayName + " (Service Principal)"
                                             $userPrincipalName = $sp.AppId
+                                            $principalType = "ServicePrincipal"
                                         }
                                     }
                                 }
@@ -282,9 +320,10 @@ function Get-IntuneRoleAudit {
                                 Write-Verbose "Could not resolve member: $member"
                                 $userDisplayName = $member
                                 $userPrincipalName = $member
+                                $principalType = "Unknown"
                             }
                             
-                            # Get scope information
+                            # Get scope information (administrative scope only)
                             $scopeInfo = "Organization"
                             $scopeDetails = @()
                             
@@ -331,6 +370,7 @@ function Get-IntuneRoleAudit {
                                 UserId = $member
                                 RoleName = $roleDefinition.displayName
                                 RoleDefinitionId = $roleDefinition.id
+                                RoleScope = "Service-Specific"  # All Intune RBAC roles are service-specific
                                 AssignmentType = $assignmentType
                                 AssignedDateTime = $assignment.createdDateTime
                                 UserEnabled = $userEnabled
@@ -343,6 +383,7 @@ function Get-IntuneRoleAudit {
                                 PIMEndDateTime = $pimEndDateTime
                                 PIMStartDateTime = $pimStartDateTime
                                 AuthenticationType = "Certificate"
+                                PrincipalType = $principalType
                             }
                         }
                         catch {
@@ -357,197 +398,56 @@ function Get-IntuneRoleAudit {
             }
         }
         catch {
-            Write-Warning "Could not retrieve Intune role assignments: $($_.Exception.Message)"
+            Write-Warning "Could not retrieve Intune administrative role assignments: $($_.Exception.Message)"
         }
         
-        # Get Device Configuration Managers (policy creators/owners)
-        Write-Host "Retrieving Device Configuration policy information..." -ForegroundColor Cyan
-        try {
-            $deviceConfigs = Invoke-MgGraphRequest -Uri "https://graph.microsoft.com/v1.0/deviceManagement/deviceConfigurations" -Method GET
-            
-            foreach ($config in $deviceConfigs.value) {
-                if ($config.createdDateTime) {
-                    $results += [PSCustomObject]@{
-                        Service = "Microsoft Intune"
-                        UserPrincipalName = "System Generated"
-                        DisplayName = "Device Configuration Policy"
-                        UserId = $null
-                        RoleName = "Device Configuration Policy Owner"
-                        RoleDefinitionId = $null
-                        AssignmentType = "Policy Owner"
-                        AssignedDateTime = $config.createdDateTime
-                        UserEnabled = $null
-                        LastSignIn = $null
-                        Scope = $config.displayName
-                        AssignmentId = $config.id
-                        RoleType = "PolicyOwner"
-                        PolicyType = "DeviceConfiguration"
-                        AuthenticationType = "Certificate"
-                    }
-                }
-            }
-        }
-        catch {
-            Write-Verbose "Could not retrieve device configuration policies: $($_.Exception.Message)"
+        Write-Host "✓ Intune administrative role audit completed. Found $($results.Count) administrative role assignments (including PIM)" -ForegroundColor Green
+        
+        # Provide feedback about role filtering
+        if (-not $IncludeAzureADRoles) {
+            Write-Host "  (Excluding overarching Azure AD roles - use -IncludeAzureADRoles to include)" -ForegroundColor Yellow
         }
         
-        # Get Compliance Policies
-        Write-Host "Retrieving Device Compliance policy information..." -ForegroundColor Cyan
-        try {
-            $compliancePolicies = Invoke-MgGraphRequest -Uri "https://graph.microsoft.com/v1.0/deviceManagement/deviceCompliancePolicies" -Method GET
-            
-            foreach ($policy in $compliancePolicies.value) {
-                if ($policy.createdDateTime) {
-                    $results += [PSCustomObject]@{
-                        Service = "Microsoft Intune"
-                        UserPrincipalName = "System Generated"
-                        DisplayName = "Device Compliance Policy"
-                        UserId = $null
-                        RoleName = "Device Compliance Policy Owner"
-                        RoleDefinitionId = $null
-                        AssignmentType = "Policy Owner"
-                        AssignedDateTime = $policy.createdDateTime
-                        UserEnabled = $null
-                        LastSignIn = $null
-                        Scope = $policy.displayName
-                        AssignmentId = $policy.id
-                        RoleType = "PolicyOwner"
-                        PolicyType = "DeviceCompliance"
-                        AuthenticationType = "Certificate"
-                    }
-                }
-            }
-        }
-        catch {
-            Write-Verbose "Could not retrieve device compliance policies: $($_.Exception.Message)"
-        }
-        
-        # Get App Protection Policies
-        Write-Host "Retrieving App Protection policy information..." -ForegroundColor Cyan
-        try {
-            # iOS App Protection Policies
-            $iosAppPolicies = Invoke-MgGraphRequest -Uri "https://graph.microsoft.com/v1.0/deviceAppManagement/iosManagedAppProtections" -Method GET
-            foreach ($policy in $iosAppPolicies.value) {
-                if ($policy.createdDateTime) {
-                    $results += [PSCustomObject]@{
-                        Service = "Microsoft Intune"
-                        UserPrincipalName = "System Generated"
-                        DisplayName = "iOS App Protection Policy"
-                        UserId = $null
-                        RoleName = "App Protection Policy Owner"
-                        RoleDefinitionId = $null
-                        AssignmentType = "Policy Owner"
-                        AssignedDateTime = $policy.createdDateTime
-                        UserEnabled = $null
-                        LastSignIn = $null
-                        Scope = $policy.displayName
-                        AssignmentId = $policy.id
-                        RoleType = "PolicyOwner"
-                        PolicyType = "iOSAppProtection"
-                        AuthenticationType = "Certificate"
-                    }
-                }
-            }
-            
-            # Android App Protection Policies
-            $androidAppPolicies = Invoke-MgGraphRequest -Uri "https://graph.microsoft.com/v1.0/deviceAppManagement/androidManagedAppProtections" -Method GET
-            foreach ($policy in $androidAppPolicies.value) {
-                if ($policy.createdDateTime) {
-                    $results += [PSCustomObject]@{
-                        Service = "Microsoft Intune"
-                        UserPrincipalName = "System Generated"
-                        DisplayName = "Android App Protection Policy"
-                        UserId = $null
-                        RoleName = "App Protection Policy Owner"
-                        RoleDefinitionId = $null
-                        AssignmentType = "Policy Owner"
-                        AssignedDateTime = $policy.createdDateTime
-                        UserEnabled = $null
-                        LastSignIn = $null
-                        Scope = $policy.displayName
-                        AssignmentId = $policy.id
-                        RoleType = "PolicyOwner"
-                        PolicyType = "AndroidAppProtection"
-                        AuthenticationType = "Certificate"
-                    }
-                }
-            }
-        }
-        catch {
-            Write-Verbose "Could not retrieve app protection policies: $($_.Exception.Message)"
-        }
-        
-        # Get Device Enrollment configurations
-        Write-Host "Retrieving Device Enrollment configurations..." -ForegroundColor Cyan
-        try {
-            $enrollmentConfigs = Invoke-MgGraphRequest -Uri "https://graph.microsoft.com/v1.0/deviceManagement/deviceEnrollmentConfigurations" -Method GET
-            
-            foreach ($config in $enrollmentConfigs.value) {
-                if ($config.createdDateTime) {
-                    $results += [PSCustomObject]@{
-                        Service = "Microsoft Intune"
-                        UserPrincipalName = "System Generated"
-                        DisplayName = "Device Enrollment Configuration"
-                        UserId = $null
-                        RoleName = "Device Enrollment Configuration Owner"
-                        RoleDefinitionId = $null
-                        AssignmentType = "Configuration Owner"
-                        AssignedDateTime = $config.createdDateTime
-                        UserEnabled = $null
-                        LastSignIn = $null
-                        Scope = $config.displayName
-                        AssignmentId = $config.id
-                        RoleType = "ConfigurationOwner"
-                        ConfigurationType = $config.deviceEnrollmentConfigurationType
-                        AuthenticationType = "Certificate"
-                    }
-                }
-            }
-        }
-        catch {
-            Write-Verbose "Could not retrieve device enrollment configurations: $($_.Exception.Message)"
-        }
-        
-        # PIM Security Analysis for Intune
-        Write-Host ""
-        Write-Host "=== Intune PIM Security Analysis ===" -ForegroundColor Cyan
-
-        $intuneResults = $results | Where-Object { $_.Service -eq "Microsoft Intune" }
-        $intuneEligibleAssignments = $intuneResults | Where-Object { $_.AssignmentType -like "*Eligible*" }
-        $intuneActiveAssignments = $intuneResults | Where-Object { $_.AssignmentType -eq "Azure AD Role" -or $_.AssignmentType -eq "Intune RBAC" }
-        $intuneServiceAdmins = $intuneResults | Where-Object { $_.RoleName -eq "Intune Service Administrator" }
-        $intuneTimeBoundAssignments = $intuneResults | Where-Object { $_.AssignmentType -eq "Time-bound RBAC" }
-
-        Write-Host "Intune PIM Statistics:" -ForegroundColor White
-        Write-Host "• Total Intune Assignments: $($intuneResults.Count)" -ForegroundColor Gray
-        Write-Host "• PIM Eligible Assignments: $($intuneEligibleAssignments.Count)" -ForegroundColor Gray
-        Write-Host "• Time-bound RBAC Assignments: $($intuneTimeBoundAssignments.Count)" -ForegroundColor Gray
-        Write-Host "• Permanent Active Assignments: $($intuneActiveAssignments.Count)" -ForegroundColor Gray
-        Write-Host "• Intune Service Administrators: $($intuneServiceAdmins.Count)" -ForegroundColor Gray
-        
+        # Enhanced administrative role analysis for Intune
         if ($IncludeAnalysis) {
+            Write-Host ""
+            Write-Host "=== Intune Administrative Role Analysis ===" -ForegroundColor Cyan
 
-            # PIM recommendations
+            $intuneResults = $results | Where-Object { $_.Service -eq "Microsoft Intune" }
+            $intuneEligibleAssignments = $intuneResults | Where-Object { $_.AssignmentType -like "*Eligible*" }
+            $intuneActiveAssignments = $intuneResults | Where-Object { $_.AssignmentType -eq "Azure AD Role" -or $_.AssignmentType -eq "Intune RBAC" }
+            $intuneServiceAdmins = $intuneResults | Where-Object { $_.RoleName -eq "Intune Service Administrator" }
+            $intuneTimeBoundAssignments = $intuneResults | Where-Object { $_.AssignmentType -eq "Time-bound RBAC" }
+            $intuneRBACAssignments = $intuneResults | Where-Object { $_.RoleType -eq "IntuneRBAC" }
+            $intuneAzureADAssignments = $intuneResults | Where-Object { $_.RoleType -eq "AzureAD" }
+
+            Write-Host "Intune Administrative Role Statistics:" -ForegroundColor White
+            Write-Host "• Total Administrative Assignments: $($intuneResults.Count)" -ForegroundColor Gray
+            Write-Host "• PIM Eligible Assignments: $($intuneEligibleAssignments.Count)" -ForegroundColor Gray
+            Write-Host "• Time-bound RBAC Assignments: $($intuneTimeBoundAssignments.Count)" -ForegroundColor Gray
+            Write-Host "• Permanent Active Assignments: $($intuneActiveAssignments.Count)" -ForegroundColor Gray
+            Write-Host "• Intune Service Administrators: $($intuneServiceAdmins.Count)" -ForegroundColor Gray
+            Write-Host "• Intune RBAC Assignments: $($intuneRBACAssignments.Count)" -ForegroundColor Gray
+            Write-Host "• Azure AD Role Assignments: $($intuneAzureADAssignments.Count)" -ForegroundColor Gray
+            
+            # Administrative role recommendations
             if ($intuneActiveAssignments.Count -gt $intuneEligibleAssignments.Count -and $intuneEligibleAssignments.Count -eq 0) {
-                Write-Host "⚠️ RECOMMENDATION: Consider implementing PIM for Intune role assignments" -ForegroundColor Yellow
+                Write-Host "⚠️ RECOMMENDATION: Consider implementing PIM for Intune administrative role assignments" -ForegroundColor Yellow
                 Write-Host "   Benefits: Just-in-time access, audit trail, approval workflows" -ForegroundColor White
             }
 
             if ($intuneServiceAdmins.Count -gt 2) {
                 Write-Host "⚠️ RECOMMENDATION: Review Intune Service Administrator count ($($intuneServiceAdmins.Count))" -ForegroundColor Yellow
-                Write-Host "   Consider using Intune RBAC roles for more granular permissions" -ForegroundColor White
+                Write-Host "   Consider using Intune RBAC roles for more granular administrative permissions" -ForegroundColor White
             }
-
-            $intuneRBACAssignments = $intuneResults | Where-Object { $_.RoleType -eq "IntuneRBAC" }
-            $intuneAzureADAssignments = $intuneResults | Where-Object { $_.RoleType -eq "AzureAD" }
 
             if ($intuneAzureADAssignments.Count -gt $intuneRBACAssignments.Count) {
                 Write-Host "⚠️ RECOMMENDATION: Leverage Intune RBAC over Azure AD roles where possible" -ForegroundColor Yellow
-                Write-Host "   Intune RBAC provides more granular, scope-specific permissions" -ForegroundColor White
+                Write-Host "   Intune RBAC provides more granular, scope-specific administrative permissions" -ForegroundColor White
             }
 
             if ($intuneEligibleAssignments.Count -gt 0) {
-                Write-Host "✓ PIM is being used for some Intune role assignments" -ForegroundColor Green
+                Write-Host "✓ PIM is being used for some Intune administrative role assignments" -ForegroundColor Green
             }
 
             if ($intuneTimeBoundAssignments.Count -gt 0) {
@@ -562,24 +462,65 @@ function Get-IntuneRoleAudit {
             Write-Host "✓ Suitable for automated/unattended execution" -ForegroundColor Green
             Write-Host "✓ Enhanced security posture maintained" -ForegroundColor Green
 
-            # Additional security recommendations
+            # Administrative role security recommendations
             Write-Host ""
-            Write-Host "Security Recommendations:" -ForegroundColor Cyan
+            Write-Host "Administrative Role Security Recommendations:" -ForegroundColor Cyan
             Write-Host "• Implement regular access reviews for Intune administrative roles" -ForegroundColor White
             Write-Host "• Use Intune RBAC for granular, scoped permissions instead of broad Azure AD roles" -ForegroundColor White
             Write-Host "• Enable PIM for Intune Service Administrator and other high-privilege roles" -ForegroundColor White
-            Write-Host "• Consider time-bound assignments for temporary access needs" -ForegroundColor White
-            Write-Host "• Monitor device policy changes through audit logs" -ForegroundColor White
-            Write-Host "• Implement approval workflows for sensitive Intune operations" -ForegroundColor White
+            Write-Host "• Consider time-bound assignments for temporary administrative access needs" -ForegroundColor White
+            Write-Host "• Monitor administrative role changes through audit logs" -ForegroundColor White
+            Write-Host "• Implement approval workflows for sensitive Intune administrative operations" -ForegroundColor White
             Write-Host "• Regularly rotate certificates (recommended 12-24 months)" -ForegroundColor White
 
             Write-Host ""
-            Write-Host "✓ Intune audit completed with PIM analysis" -ForegroundColor Green
-            Write-Host "Found $($results.Count) Intune-related role assignments and configurations" -ForegroundColor Cyan
+            Write-Host "=== SCOPE CLARIFICATION ===" -ForegroundColor Green
+            Write-Host "✓ Focused on administrative role assignments only" -ForegroundColor Green
+            Write-Host "✓ Excluded: Device Configuration policy ownership tracking" -ForegroundColor Green
+            Write-Host "✓ Excluded: Device Compliance policy ownership tracking" -ForegroundColor Green
+            Write-Host "✓ Excluded: App Protection policy ownership tracking" -ForegroundColor Green
+            Write-Host "✓ Excluded: Device Enrollment configuration ownership tracking" -ForegroundColor Green
+            Write-Host "✓ Included: Azure AD Intune administrative roles and Intune RBAC administrative assignments only" -ForegroundColor Green
+
+            Write-Host ""
+            Write-Host "✓ Intune administrative role audit completed with focused analysis" -ForegroundColor Green
+            Write-Host "Found $($results.Count) Intune administrative role assignments" -ForegroundColor Cyan
             Write-Host "Authentication Method: Certificate-based (Secure)" -ForegroundColor Green
         }
+        
+        # Show breakdown
+        if ($results.Count -gt 0) {
+            $typeSummary = $results | Group-Object PrincipalType
+            $assignmentTypeSummary = $results | Group-Object AssignmentType
+            $scopeSummary = $results | Group-Object RoleScope
+            $roleTypeSummary = $results | Group-Object RoleType
+            
+            Write-Host ""
+            Write-Host "Administrative assignment breakdown:" -ForegroundColor Cyan
+            
+            Write-Host "Principal types:" -ForegroundColor Yellow
+            foreach ($type in $typeSummary) {
+                Write-Host "  $($type.Name): $($type.Count)" -ForegroundColor White
+            }
+            
+            Write-Host "Assignment types:" -ForegroundColor Yellow
+            foreach ($type in $assignmentTypeSummary) {
+                Write-Host "  $($type.Name): $($type.Count)" -ForegroundColor White
+            }
+            
+            Write-Host "Role scope:" -ForegroundColor Yellow
+            foreach ($scope in $scopeSummary) {
+                Write-Host "  $($scope.Name): $($scope.Count)" -ForegroundColor White
+            }
+            
+            Write-Host "Role types:" -ForegroundColor Yellow
+            foreach ($roleType in $roleTypeSummary) {
+                Write-Host "  $($roleType.Name): $($roleType.Count)" -ForegroundColor White
+            }
+        }
+        
     } catch {
-        Write-Error "Error during Intune role audit: $($_.Exception.Message)"
+        Write-Error "Error during Intune administrative role audit: $($_.Exception.Message)"
         Write-Error "Stack trace: $($_.ScriptStackTrace)"
         
         # Provide troubleshooting guidance based on error type
@@ -604,7 +545,6 @@ function Get-IntuneRoleAudit {
         
         throw
     }
-
     
     return $results
 }

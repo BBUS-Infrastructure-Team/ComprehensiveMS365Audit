@@ -2,6 +2,7 @@
 # Enhanced HTML reporting function updated for comprehensive M365 audit module
 #
 
+
 function Export-M365AuditHtmlReport {
     param(
         [Parameter(
@@ -584,82 +585,75 @@ function Export-M365AuditHtmlReport {
             border-bottom: 2px solid var(--primary-color);
         }
         
-        /* Enhanced styles for compact user role display */
         .user-roles-container {
             display: flex;
             flex-direction: column;
-            gap: 8px;
-            padding: 10px 0;
+            gap: 15px;
+            /* Removed max-height and overflow to allow full expansion */
         }
-
-        .service-group-compact {
-            margin-bottom: 12px;
-        }
-
-        .service-header-compact {
-            font-weight: bold;
-            color: var(--primary-color);
-            font-size: 0.9em;
-            margin-bottom: 4px;
-            padding: 4px 0;
-            border-bottom: 1px solid #e1dfdd;
-        }
-
-        .roles-list-compact {
-            margin-left: 16px;
-            list-style: none;
-            padding: 0;
-        }
-
-        .role-item-compact {
-            padding: 2px 0;
-            font-size: 0.85em;
-            color: #333;
-            display: flex;
-            align-items: center;
-            gap: 8px;
-        }
-
-        .role-item-compact::before {
-            content: "•";
-            color: var(--primary-color);
-            font-weight: bold;
-            width: 8px;
-        }
-
-        .role-badge-mini {
-            display: inline-block;
-            background: var(--info-color);
-            color: white;
-            padding: 1px 6px;
+        
+        .service-group {
+            border: 1px solid #e1dfdd;
             border-radius: 8px;
-            font-size: 0.7em;
-            font-weight: 500;
-            margin-left: auto;
+            overflow: hidden;
+            background: #ffffff;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+            margin-bottom: 10px;
         }
-
-        .role-badge-mini.pim-eligible {
-            background: var(--success-color);
+        
+        .service-group-header {
+            padding: 12px 16px;
+            font-weight: bold;
+            color: white;
+            font-size: 0.9em;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
         }
-
-        .role-badge-mini.pim-active {
-            background: var(--warning-color);
+        
+        /* Service Group Header Colors */
+        .service-group-header.service-azure { background: linear-gradient(135deg, #0078d4, #106ebe); }
+        .service-group-header.service-sharepoint { background: linear-gradient(135deg, #0b6623, #0e7629); }
+        .service-group-header.service-exchange { background: linear-gradient(135deg, #d13438, #b02a37); }
+        .service-group-header.service-teams { background: linear-gradient(135deg, #464775, #5b5d8a); }
+        .service-group-header.service-purview { background: linear-gradient(135deg, #8b4789, #9e5a9c); }
+        .service-group-header.service-intune { background: linear-gradient(135deg, #00bcf2, #0078d4); }
+        .service-group-header.service-defender { background: linear-gradient(135deg, #ff8c00, #e67e22); }
+        .service-group-header.service-powerplatform { background: linear-gradient(135deg, #742774, #8b4789); }
+        
+        .service-roles {
+            padding: 15px;
+            background: #fafafa;
+            min-height: 50px;
         }
-
-        .role-badge-mini.permanent {
-            background: var(--primary-color);
+        
+        .role-item {
+            padding: 8px 12px;
+            margin: 5px 0;
+            background: #ffffff;
+            border: 1px solid #e1dfdd;
+            border-radius: 4px;
+            font-size: 0.9em;
+            color: #333;
+            transition: all 0.2s ease;
+            display: block;
+            width: 100%;
         }
-
-        /* Service header colors for compact view */
-        .service-header-compact.azure { color: #0078d4; border-bottom-color: #0078d4; }
-        .service-header-compact.sharepoint { color: #0b6623; border-bottom-color: #0b6623; }
-        .service-header-compact.exchange { color: #d13438; border-bottom-color: #d13438; }
-        .service-header-compact.teams { color: #464775; border-bottom-color: #464775; }
-        .service-header-compact.purview { color: #8b4789; border-bottom-color: #8b4789; }
-        .service-header-compact.intune { color: #00bcf2; border-bottom-color: #00bcf2; }
-        .service-header-compact.defender { color: #ff8c00; border-bottom-color: #ff8c00; }
-        .service-header-compact.powerplatform { color: #742774; border-bottom-color: #742774; }  
-                
+        
+        .role-item:hover {
+            background: #f0f8ff;
+            border-color: var(--primary-color);
+            transform: translateX(5px);
+        }
+        
+        .no-roles {
+            text-align: center;
+            padding: 20px;
+            color: #666;
+            font-style: italic;
+            background: #f9f9f9;
+            border-radius: 8px;
+        }
+        
         /* Mobile Responsive */
         @media (max-width: 768px) {
             .container { padding: 20px; }
@@ -809,7 +803,7 @@ function Export-M365AuditHtmlReport {
     <div class="container">
         <div class="header">
             <h1>Microsoft 365 Comprehensive Role Audit</h1>
-            <p>$OrganizationName | Generated on $(Get-Date -Format "MMMM dd, yyyy 'at' HH:mm")</p>
+            <p>$OrganizationName | Generated on $(Get-Date -Format 'MMMM dd, yyyy at HH:mm')</p>
         </div>
         
         <div class="metadata">
@@ -1086,55 +1080,40 @@ function Export-M365AuditHtmlReport {
         $userRoles = Get-UserRoles -AuditResults $AuditResults -UserPrincipalName $user.userPrincipalName
         $userId = ($user.userPrincipalName -replace '[^a-zA-Z0-9]', '')
         
-                $serviceGroupedRoles = ""
+        # Build service-grouped roles
+        $serviceGroupedRoles = ""
         if ($userRoles.Count -gt 0) {
             $rolesByService = $userRoles | Group-Object Service | Sort-Object Name
             $serviceGroupedRoles = "<div class='user-roles-container'>"
             
             foreach ($serviceGroup in $rolesByService) {
-                # Determine service class for color coding
                 $serviceClass = switch ($serviceGroup.Name) {
-                    "Azure AD/Entra ID" { "azure" }
-                    "SharePoint Online" { "sharepoint" }
-                    "Exchange Online" { "exchange" }
-                    "Microsoft Teams" { "teams" }
-                    "Microsoft Purview" { "purview" }
-                    "Microsoft Intune" { "intune" }
-                    "Microsoft Defender" { "defender" }
-                    "Power Platform" { "powerplatform" }
-                    default { "azure" }
+                    "Azure AD/Entra ID" { "service-azure" }
+                    "SharePoint Online" { "service-sharepoint" }
+                    "Exchange Online" { "service-exchange" }
+                    "Microsoft Teams" { "service-teams" }
+                    "Microsoft Purview" { "service-purview" }
+                    "Microsoft Intune" { "service-intune" }
+                    "Microsoft Defender" { "service-defender" }
+                    "Power Platform" { "service-powerplatform" }
+                    default { "service-azure" }
                 }
                 
-                $serviceGroupedRoles += "<div class='service-group-compact'>"
-                $serviceGroupedRoles += "<div class='service-header-compact $serviceClass'>$($serviceGroup.Name)</div>"
-                $serviceGroupedRoles += "<ul class='roles-list-compact'>"
+                $serviceGroupedRoles += "<div class='service-group'>"
+                $serviceGroupedRoles += "<div class='service-group-header $serviceClass'>$($serviceGroup.Name)</div>"
+                $serviceGroupedRoles += "<div class='service-roles'>"
                 
-                foreach ($role in $serviceGroup.Group | Sort-Object RoleName) {
-                    # Determine assignment type badge
-                    $badgeClass = "permanent"
-                    $badgeText = "Active"
-                    
-                    if ($role.AssignmentType -like "*Eligible*") {
-                        $badgeClass = "pim-eligible"
-                        $badgeText = "PIM Eligible"
-                    } elseif ($role.AssignmentType -like "*PIM*") {
-                        $badgeClass = "pim-active"
-                        $badgeText = "PIM Active"
-                    }
-                    
-                    $serviceGroupedRoles += "<li class='role-item-compact'>"
-                    $serviceGroupedRoles += "<span>$($role.RoleName)</span>"
-                    $serviceGroupedRoles += "<span class='role-badge-mini $badgeClass'>$badgeText</span>"
-                    $serviceGroupedRoles += "</li>"
+                foreach ($role in $serviceGroup.Group) {
+                    $serviceGroupedRoles += "<div class='role-item'>$($role.RoleName)</div>"
                 }
                 
-                $serviceGroupedRoles += "</ul></div>"
+                $serviceGroupedRoles += "</div></div>"
             }
-                $serviceGroupedRoles += "</div>"
+            $serviceGroupedRoles += "</div>"
         } else {
             $serviceGroupedRoles = "<div class='no-roles'>No roles found</div>"
         }
-            
+        
         $html += @"
 <tr class='expandable-user-row' onclick="toggleUserRoles('$userId')">
     <td $statusColor><strong>$($user.displayName)</strong><br><small style='color: #666;'>$($user.userPrincipalName)</small> <span class='expand-indicator'>▶</span></td>
@@ -1437,13 +1416,13 @@ function Export-M365AuditHtmlReport {
                     <div class="stat-label">Account Cleanup</div>
                     <small>$($complianceAnalysis.privilegedAccessCompliance.disabledAccountCleanup.violationCount) violations</small>
                 </div>
-                <!-- <div class="stat-item">
+                <div class="stat-item">
                     <div class="stat-number" style="color: $(if($complianceAnalysis.authenticationCompliance.certificateBasedAuth.compliant) {'var(--success-color)'} else {'var(--warning-color)'});">
                         $($complianceAnalysis.authenticationCompliance.certificateBasedAuth.percentage)%
                     </div>
                     <div class="stat-label">Certificate Auth Usage</div>
                     <small>Secure authentication percentage</small>
-                </div> -->
+                </div>
             </div>
         </div>
 "@

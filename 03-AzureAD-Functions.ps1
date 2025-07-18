@@ -186,15 +186,15 @@ function Get-AzureADRoleAudit {
     return $results
 }
 
-# Fixed Teams and Defender functions with PIM support
-# Replace the existing functions in 03-AzureAD-Functions.ps1
+# Enhanced Teams Role Audit Function with Azure AD Role Filtering
+# Add to 03-AzureAD-Functions.ps1
 
-# Teams Roles (Azure AD roles) - Certificate Authentication + PIM Support
 function Get-TeamsRoleAudit {
     param(
         [string]$TenantId,
         [string]$ClientId,
-        [string]$CertificateThumbprint
+        [string]$CertificateThumbprint,
+        [switch]$IncludeAzureADRoles  # New parameter to control inclusion of overarching roles
     )
     
     $results = @()
@@ -226,8 +226,8 @@ function Get-TeamsRoleAudit {
             Write-Host "✓ Connected with certificate authentication" -ForegroundColor Green
         }
         
-        # Teams-specific Azure AD roles
-        $teamsRoles = @(
+        # Teams-specific Azure AD roles (NOT overarching roles)
+        $teamsSpecificRoles = @(
             "Teams Administrator",
             "Teams Communications Administrator",
             "Teams Communications Support Engineer", 
@@ -236,8 +236,26 @@ function Get-TeamsRoleAudit {
             "Teams Telephony Administrator"
         )
         
+        # Overarching roles that should only appear in Azure AD audit
+        $overarchingRoles = @(
+            "Global Administrator",
+            "Security Administrator",
+            "Security Reader",
+            "Cloud Application Administrator",
+            "Application Administrator",
+            "Privileged Authentication Administrator",
+            "Privileged Role Administrator"
+        )
+        
+        # Determine which roles to include based on parameter
+        $rolesToInclude = if ($IncludeAzureADRoles) {
+            $teamsSpecificRoles + $overarchingRoles
+        } else {
+            $teamsSpecificRoles
+        }
+        
         Write-Host "Retrieving Teams-related Azure AD roles..." -ForegroundColor Cyan
-        $roleDefinitions = Get-MgRoleManagementDirectoryRoleDefinition | Where-Object { $_.DisplayName -in $teamsRoles }
+        $roleDefinitions = Get-MgRoleManagementDirectoryRoleDefinition | Where-Object { $_.DisplayName -in $rolesToInclude }
         Write-Host "Found $($roleDefinitions.Count) Teams role definitions" -ForegroundColor Green
         
         # Get ALL assignment types (regular + PIM eligible + PIM active)
@@ -349,6 +367,9 @@ function Get-TeamsRoleAudit {
                     catch { }
                 }
                 
+                # Determine role scope for enhanced deduplication
+                $roleScope = if ($role.DisplayName -in $overarchingRoles) { "Overarching" } else { "Service-Specific" }
+                
                 $results += [PSCustomObject]@{
                     Service = "Microsoft Teams"
                     UserPrincipalName = $principalInfo.UserPrincipalName
@@ -356,6 +377,7 @@ function Get-TeamsRoleAudit {
                     UserId = $principalInfo.UserId
                     RoleName = $role.DisplayName
                     RoleDefinitionId = $assignment.RoleDefinitionId
+                    RoleScope = $roleScope  # New property for enhanced deduplication
                     AssignmentType = $assignmentType
                     AssignedDateTime = $assignment.CreatedDateTime
                     UserEnabled = $principalInfo.UserEnabled
@@ -376,10 +398,16 @@ function Get-TeamsRoleAudit {
         
         Write-Host "✓ Teams role audit completed. Found $($results.Count) role assignments (including PIM)" -ForegroundColor Green
         
+        # Provide feedback about role filtering
+        if (-not $IncludeAzureADRoles) {
+            Write-Host "  (Excluding overarching Azure AD roles - use -IncludeAzureADRoles to include)" -ForegroundColor Yellow
+        }
+        
         # Show breakdown
         if ($results.Count -gt 0) {
             $typeSummary = $results | Group-Object PrincipalType
             $assignmentTypeSummary = $results | Group-Object AssignmentType
+            $scopeSummary = $results | Group-Object RoleScope
             
             Write-Host "Principal types:" -ForegroundColor Cyan
             foreach ($type in $typeSummary) {
@@ -389,6 +417,11 @@ function Get-TeamsRoleAudit {
             Write-Host "Assignment types:" -ForegroundColor Cyan
             foreach ($type in $assignmentTypeSummary) {
                 Write-Host "  $($type.Name): $($type.Count)" -ForegroundColor White
+            }
+            
+            Write-Host "Role scope:" -ForegroundColor Cyan
+            foreach ($scope in $scopeSummary) {
+                Write-Host "  $($scope.Name): $($scope.Count)" -ForegroundColor White
             }
         }
         
@@ -407,12 +440,15 @@ function Get-TeamsRoleAudit {
     return $results
 }
 
-# Microsoft Defender Roles - Certificate Authentication + PIM Support
+# Enhanced Microsoft Defender Role Audit Function with Azure AD Role Filtering
+# Add to 03-AzureAD-Functions.ps1
+
 function Get-DefenderRoleAudit {
     param(
         [string]$TenantId,
         [string]$ClientId,
-        [string]$CertificateThumbprint
+        [string]$CertificateThumbprint,
+        [switch]$IncludeAzureADRoles  # New parameter to control inclusion of overarching roles
     )
     
     $results = @()
@@ -444,18 +480,31 @@ function Get-DefenderRoleAudit {
             Write-Host "✓ Connected with certificate authentication" -ForegroundColor Green
         }
         
-        # Defender-related Azure AD roles
-        $defenderRoles = @(
+        # Defender-specific roles (limited set)
+        $defenderSpecificRoles = @(
+            "Security Operator"
+        )
+        
+        # Overarching security roles that should only appear in Azure AD audit
+        $overarchingRoles = @(
             "Security Administrator",
-            "Security Operator", 
             "Security Reader",
             "Global Administrator",
             "Cloud Application Administrator",
-            "Application Administrator"
+            "Application Administrator",
+            "Privileged Authentication Administrator",
+            "Privileged Role Administrator"
         )
         
+        # Determine which roles to include based on parameter
+        $rolesToInclude = if ($IncludeAzureADRoles) {
+            $defenderSpecificRoles + $overarchingRoles
+        } else {
+            $defenderSpecificRoles
+        }
+        
         Write-Host "Retrieving Defender-related Azure AD roles..." -ForegroundColor Cyan
-        $roleDefinitions = Get-MgRoleManagementDirectoryRoleDefinition | Where-Object { $_.DisplayName -in $defenderRoles }
+        $roleDefinitions = Get-MgRoleManagementDirectoryRoleDefinition | Where-Object { $_.DisplayName -in $rolesToInclude }
         Write-Host "Found $($roleDefinitions.Count) Defender role definitions" -ForegroundColor Green
         
         # Get ALL assignment types (regular + PIM eligible + PIM active)
@@ -567,6 +616,9 @@ function Get-DefenderRoleAudit {
                     catch { }
                 }
                 
+                # Determine role scope for enhanced deduplication
+                $roleScope = if ($role.DisplayName -in $overarchingRoles) { "Overarching" } else { "Service-Specific" }
+                
                 $results += [PSCustomObject]@{
                     Service = "Microsoft Defender"
                     UserPrincipalName = $principalInfo.UserPrincipalName
@@ -574,6 +626,7 @@ function Get-DefenderRoleAudit {
                     UserId = $principalInfo.UserId
                     RoleName = $role.DisplayName
                     RoleDefinitionId = $assignment.RoleDefinitionId
+                    RoleScope = $roleScope  # New property for enhanced deduplication
                     AssignmentType = $assignmentType
                     AssignedDateTime = $assignment.CreatedDateTime
                     UserEnabled = $principalInfo.UserEnabled
@@ -594,10 +647,16 @@ function Get-DefenderRoleAudit {
         
         Write-Host "✓ Defender role audit completed. Found $($results.Count) role assignments (including PIM)" -ForegroundColor Green
         
+        # Provide feedback about role filtering
+        if (-not $IncludeAzureADRoles) {
+            Write-Host "  (Excluding overarching Azure AD roles - use -IncludeAzureADRoles to include)" -ForegroundColor Yellow
+        }
+        
         # Show breakdown
         if ($results.Count -gt 0) {
             $typeSummary = $results | Group-Object PrincipalType
             $assignmentTypeSummary = $results | Group-Object AssignmentType
+            $scopeSummary = $results | Group-Object RoleScope
             
             Write-Host "Principal types:" -ForegroundColor Cyan
             foreach ($type in $typeSummary) {
@@ -607,6 +666,11 @@ function Get-DefenderRoleAudit {
             Write-Host "Assignment types:" -ForegroundColor Cyan
             foreach ($type in $assignmentTypeSummary) {
                 Write-Host "  $($type.Name): $($type.Count)" -ForegroundColor White
+            }
+            
+            Write-Host "Role scope:" -ForegroundColor Cyan
+            foreach ($scope in $scopeSummary) {
+                Write-Host "  $($scope.Name): $($scope.Count)" -ForegroundColor White
             }
         }
         
@@ -625,19 +689,15 @@ function Get-DefenderRoleAudit {
     return $results
 }
 
-# Fixed Power Platform Azure AD Roles function
-# Handles Users, Groups, AND Service Principals (Application Registrations)
-# Check for PIM assignments - this is likely where your 3 assignments are hiding
-
-# Final Power Platform Azure AD Roles function
-# Includes Regular, PIM Eligible, AND PIM Active assignments
-# This will find your 3 assignments!
+# Enhanced Power Platform Azure AD Role Audit Function with Azure AD Role Filtering
+# Add to 03-AzureAD-Functions.ps1
 
 function Get-PowerPlatformAzureADRoleAudit {
     param(
         [string]$TenantId,
         [string]$ClientId,
-        [string]$CertificateThumbprint
+        [string]$CertificateThumbprint,
+        [switch]$IncludeAzureADRoles  # New parameter to control inclusion of overarching roles
     )
     
     $results = @()
@@ -669,33 +729,50 @@ function Get-PowerPlatformAzureADRoleAudit {
             Write-Host "✓ Connected with certificate authentication" -ForegroundColor Green
         }
         
-        # Power Platform-related Azure AD roles
-        $powerPlatformRoles = @(
-            "Power Platform Administrator",
+        # Power Platform-specific Azure AD roles (NOT overarching roles)
+        $powerPlatformSpecificRoles = @(
             "Dynamics 365 Administrator",
             "Power BI Administrator",
             "Power BI Service Administrator",  # Legacy name
-            "CRM Service Administrator",       # Legacy name for Dynamics 365 Administrator
-            "Dynamics 365 Service Administrator"
+            "CRM Service Administrator"       # Legacy name for Dynamics 365 Administrator
         )
         
+        # Overarching roles that should only appear in Azure AD audit
+        $overarchingRoles = @(
+            "Global Administrator",
+            "Security Administrator",
+            "Security Reader",
+            "Cloud Application Administrator",
+            "Application Administrator",
+            "Privileged Authentication Administrator",
+            "Privileged Role Administrator",
+            "Power Platform Administrator"  # This is overarching - covers all Power Platform services
+        )
+        
+        # Determine which roles to include based on parameter
+        $rolesToInclude = if ($IncludeAzureADRoles) {
+            $powerPlatformSpecificRoles + $overarchingRoles
+        } else {
+            $powerPlatformSpecificRoles
+        }
+        
         Write-Host "Retrieving Power Platform-related Azure AD roles..." -ForegroundColor Cyan
-        $roleDefinitions = Get-MgRoleManagementDirectoryRoleDefinition | Where-Object { $_.DisplayName -in $powerPlatformRoles }
+        $roleDefinitions = Get-MgRoleManagementDirectoryRoleDefinition | Where-Object { $_.DisplayName -in $rolesToInclude }
         Write-Host "Found $($roleDefinitions.Count) Power Platform role definitions" -ForegroundColor Green
         
-        # Initialize assignment collection
+        # Get ALL assignment types (regular + PIM eligible + PIM active)
         $allAssignments = @()
         
-        # 1. Get regular assignments (permanent)
-        Write-Host "Checking regular assignments..." -ForegroundColor Cyan
+        # 1. Regular assignments (permanent)
+        Write-Host "Checking regular Power Platform assignments..." -ForegroundColor Cyan
         $regularAssignments = Get-MgRoleManagementDirectoryRoleAssignment | Where-Object { $_.RoleDefinitionId -in $roleDefinitions.Id }
         if ($regularAssignments) {
             $allAssignments += $regularAssignments
         }
         Write-Host "Found $($regularAssignments.Count) regular assignments" -ForegroundColor Gray
         
-        # 2. Get PIM eligible assignments (require activation)
-        Write-Host "Checking PIM eligible assignments..." -ForegroundColor Cyan
+        # 2. PIM eligible assignments (require activation)
+        Write-Host "Checking PIM eligible Power Platform assignments..." -ForegroundColor Cyan
         $pimEligibleCount = 0
         try {
             foreach ($roleId in $roleDefinitions.Id) {
@@ -711,8 +788,8 @@ function Get-PowerPlatformAzureADRoleAudit {
         }
         Write-Host "Found $pimEligibleCount PIM eligible assignments" -ForegroundColor Gray
         
-        # 3. Get PIM active assignments (time-limited, currently activated) - THIS IS WHERE YOUR 3 ARE!
-        Write-Host "Checking PIM active assignments..." -ForegroundColor Cyan
+        # 3. PIM active assignments (time-limited, currently activated)
+        Write-Host "Checking PIM active Power Platform assignments..." -ForegroundColor Cyan
         $pimActiveCount = 0
         try {
             foreach ($roleId in $roleDefinitions.Id) {
@@ -728,7 +805,7 @@ function Get-PowerPlatformAzureADRoleAudit {
         }
         Write-Host "Found $pimActiveCount PIM active assignments" -ForegroundColor $(if($pimActiveCount -gt 0) {"Green"} else {"Gray"})
         
-        Write-Host "Total assignments to process: $($allAssignments.Count)" -ForegroundColor Green
+        Write-Host "Total Power Platform assignments to process: $($allAssignments.Count)" -ForegroundColor Green
         
         # Process all assignments (regular + PIM eligible + PIM active)
         foreach ($assignment in $allAssignments) {
@@ -744,18 +821,17 @@ function Get-PowerPlatformAzureADRoleAudit {
                     $assignmentType = "Active (PIM)"
                 }
                 
-                # Initialize principal information
+                # Resolve principal (users, groups, service principals)
                 $principalInfo = @{
                     UserPrincipalName = "Unknown"
-                    DisplayName = "Unknown Principal"
+                    DisplayName = "Unknown"
                     UserId = $assignment.PrincipalId
                     UserEnabled = $null
                     LastSignIn = $null
                     PrincipalType = "Unknown"
                 }
                 
-                # Try to resolve principal - check multiple types
-                # Method 1: Try as User first
+                # Try as user first
                 try {
                     $user = Get-MgUser -UserId $assignment.PrincipalId -ErrorAction SilentlyContinue
                     if ($user) {
@@ -766,11 +842,9 @@ function Get-PowerPlatformAzureADRoleAudit {
                         $principalInfo.PrincipalType = "User"
                     }
                 }
-                catch {
-                    Write-Verbose "Not a user: $($assignment.PrincipalId)"
-                }
+                catch { }
                 
-                # Method 2: Try as Service Principal (Application Registration) if user lookup failed
+                # Try as service principal if not user
                 if ($principalInfo.PrincipalType -eq "Unknown") {
                     try {
                         $servicePrincipal = Get-MgServicePrincipal -ServicePrincipalId $assignment.PrincipalId -ErrorAction SilentlyContinue
@@ -781,12 +855,10 @@ function Get-PowerPlatformAzureADRoleAudit {
                             $principalInfo.PrincipalType = "ServicePrincipal"
                         }
                     }
-                    catch {
-                        Write-Verbose "Not a service principal: $($assignment.PrincipalId)"
-                    }
+                    catch { }
                 }
                 
-                # Method 3: Try as Group if still unknown
+                # Try as group if still unknown
                 if ($principalInfo.PrincipalType -eq "Unknown") {
                     try {
                         $group = Get-MgGroup -GroupId $assignment.PrincipalId -ErrorAction SilentlyContinue
@@ -796,12 +868,10 @@ function Get-PowerPlatformAzureADRoleAudit {
                             $principalInfo.PrincipalType = "Group"
                         }
                     }
-                    catch {
-                        Write-Verbose "Not a group: $($assignment.PrincipalId)"
-                    }
+                    catch { }
                 }
                 
-                # Method 4: If still unknown, try generic directory object
+                # Try as directory object if still unknown
                 if ($principalInfo.PrincipalType -eq "Unknown") {
                     try {
                         $directoryObject = Get-MgDirectoryObject -DirectoryObjectId $assignment.PrincipalId -ErrorAction SilentlyContinue
@@ -810,12 +880,12 @@ function Get-PowerPlatformAzureADRoleAudit {
                             $principalInfo.PrincipalType = $directoryObject.'@odata.type'
                         }
                     }
-                    catch {
-                        Write-Verbose "Could not resolve directory object: $($assignment.PrincipalId)"
-                    }
+                    catch { }
                 }
                 
-                # Create result - INCLUDE ALL PRINCIPAL TYPES AND ASSIGNMENT TYPES
+                # Determine role scope for enhanced deduplication
+                $roleScope = if ($role.DisplayName -in $overarchingRoles) { "Overarching" } else { "Service-Specific" }
+                
                 $results += [PSCustomObject]@{
                     Service = "Power Platform"
                     UserPrincipalName = $principalInfo.UserPrincipalName
@@ -823,6 +893,7 @@ function Get-PowerPlatformAzureADRoleAudit {
                     UserId = $principalInfo.UserId
                     RoleName = $role.DisplayName
                     RoleDefinitionId = $assignment.RoleDefinitionId
+                    RoleScope = $roleScope  # New property for enhanced deduplication
                     AssignmentType = $assignmentType
                     AssignedDateTime = $assignment.CreatedDateTime
                     UserEnabled = $principalInfo.UserEnabled
@@ -831,7 +902,6 @@ function Get-PowerPlatformAzureADRoleAudit {
                     AssignmentId = $assignment.Id
                     AuthenticationType = "Certificate"
                     PrincipalType = $principalInfo.PrincipalType
-                    # PIM-specific fields
                     PIMStartDateTime = $assignment.ScheduleInfo.StartDateTime
                     PIMEndDateTime = $assignment.ScheduleInfo.Expiration.EndDateTime
                 }
@@ -839,15 +909,17 @@ function Get-PowerPlatformAzureADRoleAudit {
             }
             catch {
                 Write-Verbose "Error processing Power Platform assignment: $($_.Exception.Message)"
-                # Don't skip - still add with limited info
+                
+                # Still add with limited info to avoid losing data
                 $role = $roleDefinitions | Where-Object { $_.Id -eq $assignment.RoleDefinitionId }
                 $results += [PSCustomObject]@{
                     Service = "Power Platform"
                     UserPrincipalName = "Error resolving principal"
                     DisplayName = "Principal ID: $($assignment.PrincipalId)"
                     UserId = $assignment.PrincipalId
-                    RoleName = $role.DisplayName
+                    RoleName = if ($role) { $role.DisplayName } else { "Unknown Role" }
                     RoleDefinitionId = $assignment.RoleDefinitionId
+                    RoleScope = "Unknown"
                     AssignmentType = "Error"
                     AssignedDateTime = $assignment.CreatedDateTime
                     UserEnabled = $null
@@ -856,11 +928,18 @@ function Get-PowerPlatformAzureADRoleAudit {
                     AssignmentId = $assignment.Id
                     AuthenticationType = "Certificate"
                     PrincipalType = "Error"
+                    PIMStartDateTime = $null
+                    PIMEndDateTime = $null
                 }
             }
         }
         
-        Write-Host "✓ Power Platform Azure AD role audit completed. Found $($results.Count) role assignments" -ForegroundColor Green
+        Write-Host "✓ Power Platform Azure AD role audit completed. Found $($results.Count) role assignments (including PIM)" -ForegroundColor Green
+        
+        # Provide feedback about role filtering
+        if (-not $IncludeAzureADRoles) {
+            Write-Host "  (Excluding overarching Azure AD roles - use -IncludeAzureADRoles to include)" -ForegroundColor Yellow
+        }
         
         # Show detailed breakdown
         if ($results.Count -gt 0) {
@@ -879,6 +958,13 @@ function Get-PowerPlatformAzureADRoleAudit {
             Write-Host "Assignment types:" -ForegroundColor Yellow
             foreach ($type in $assignmentTypeSummary) {
                 Write-Host "  $($type.Name): $($type.Count)" -ForegroundColor White
+            }
+            
+            # By role scope
+            $scopeSummary = $results | Group-Object RoleScope
+            Write-Host "Role scope:" -ForegroundColor Yellow
+            foreach ($scope in $scopeSummary) {
+                Write-Host "  $($scope.Name): $($scope.Count)" -ForegroundColor White
             }
             
             # By role

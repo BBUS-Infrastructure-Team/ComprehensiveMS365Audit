@@ -1,315 +1,164 @@
 # 06-Compliance-Functions.ps1
-# Microsoft Purview/Compliance role audit functions - Certificate Authentication Only
-# Fixed to use script-level variables from Set-M365AuditCredentials
+# Focused Microsoft Purview Administrative Role Audit Function
+# Updated to properly separate Azure AD roles from Compliance Center role groups
+
 function Get-PurviewRoleAudit {
     param(
         [Parameter(Mandatory = $true)]
         [string]$Organization,
 
         [string]$TenantId,
-
         [string]$ClientId,
-
-        [string]$CertificateThumbprint
+        [string]$CertificateThumbprint,
+        [switch]$IncludeAzureADRoles  # Include overarching Azure AD Purview roles
     )
     
     $results = @()
     
     try {
-        # Set app credentials if provided, otherwise use existing script variables
+        # Set app credentials if provided
         if ($TenantId -and $ClientId -and $CertificateThumbprint) {
             Set-M365AuditCertCredentials -TenantId $TenantId -ClientId $ClientId -CertificateThumbprint $CertificateThumbprint
         }
         
-        # Verify certificate authentication is configured
+        # Verify certificate authentication
         if (-not $script:AppConfig.UseAppAuth -or $script:AppConfig.AuthType -ne "Certificate") {
             Write-Warning "Certificate authentication is required for Compliance role audit"
-            Write-Host "Please configure certificate authentication first:" -ForegroundColor Yellow
-            Write-Host "• Run: Set-M365AuditCertCredentials -TenantId <id> -ClientId <id> -CertificateThumbprint <thumbprint>" -ForegroundColor White
-            Write-Host "• Or: Get-M365AuditRequiredPermissions for setup instructions" -ForegroundColor White
             return $results
         }
         
-        # Use script variables for authentication
-        # AuthMethod = "Application"
-        # Write-Host "Using configured certificate credentials for Compliance audit:" -ForegroundColor Cyan
-        # Write-Host "  Tenant ID: $($script:AppConfig.TenantId)" -ForegroundColor Gray
-        # Write-Host "  Client ID: $($script:AppConfig.ClientId)" -ForegroundColor Gray
-        # Write-Host "  Certificate Thumbprint: $($script:AppConfig.CertificateThumbprint)" -ForegroundColor Gray
+        # === ENHANCED AZURE AD ROLE FILTERING ===
+        # Purview-specific Azure AD administrative roles (NOT overarching roles)
+        $purviewSpecificRoles = @(
+            "Compliance Administrator",        # Purview-focused
+            "Compliance Data Administrator",   # Purview-focused  
+            "eDiscovery Administrator",
+            "eDiscovery Manager", 
+            "Information Protection Administrator",
+            "Information Protection Analyst",
+            "Information Protection Investigator",
+            "Information Protection Reader",
+            "Role Management",                 # Clearly administrative
+            "Organization Configuration",      # Clearly administrative  
+            "Supervisory Review Administrator" # Clearly administrative
+        )
         
-        # Check if connected to Security & Compliance Center
-        $EXOsession = Get-ConnectionInformation | Where-Object { $_.ConnectionUri -like "outlook*" -and $_.State -eq "Connected" }
-        $IPSSsession = Get-ConnectionInformation | Where-Object { $_.ConnectionUri -like "*compliance" -and $_.State -eq 'Connected'}
-
-        If (-not $EXOsession) {
-            Write-Host 'Connecting to Exchange Online' -ForegroundColor Yellow
-
-            try {
-                if ($IsWindows) {
-                    Connect-ExchangeOnline `
-                        -AppId $script:AppConfig.ClientId `
-                        -CertificateThumbprint $script:AppConfig.CertificateThumbprint `
-                        -Organization $Organization `
-                        -ShowBanner:$false
-                } elseIf ($IsLinux -or $IsMacOS) {
-                    Connect-ExchangeOnline `
-                        -AppId $script:AppConfig.ClientId `
-                        -Certificate $script:AppConfig.Certificate `
-                        -Organization $Organization `
-                        -ShowBanner:$false
-                    
-                } 
-            } catch {
-                Write-Error "Exchange Online certificate authentication failed: $($_.Exception.Message)"
-                Write-Host "Troubleshooting steps:" -ForegroundColor Yellow
-                Write-Host "• Ensure certificate is uploaded to Azure AD app registration" -ForegroundColor White
-                Write-Host "• Verify app has required Compliance permissions" -ForegroundColor White
-                Write-Host "• Check certificate expiration and validity" -ForegroundColor White
-                Write-Host "• Run: Get-M365AuditCurrentConfig to verify configuration" -ForegroundColor White
-                return $results
-            }
+        # Overarching roles that should only appear in Azure AD audit
+        $overarchingRoles = @(
+            "Global Administrator",
+            "Security Administrator",
+            "Security Reader",
+            "Cloud Application Administrator",
+            "Application Administrator",
+            "Privileged Authentication Administrator",
+            "Privileged Role Administrator"
+        )
+        
+        # Determine which roles to include based on parameter
+        $rolesToInclude = if ($IncludeAzureADRoles) {
+            $purviewSpecificRoles + $overarchingRoles
         } else {
-            Write-Host "✓ Already connected to Exchange Online" -ForegroundColor Green
-
+            $purviewSpecificRoles
         }
-
-        If (-Not $IPSSsession) {
-            Write-Host "Connecting to Security & Compliance Center with certificate authentication..." -ForegroundColor Yellow
+        
+        # === GET PURVIEW-RELATED AZURE AD ADMINISTRATIVE ROLES ===
+        if ($rolesToInclude.Count -gt 0) {
+            Write-Host "Retrieving Purview-related Azure AD administrative roles..." -ForegroundColor Cyan
             
-            try {
-                # Use script variables for connection
-                if ($IsWindows) {
-                    Connect-IPPSSession `
-                        -AppId $script:AppConfig.ClientId `
-                        -CertificateThumbprint $script:AppConfig.CertificateThumbprint `
-                        -Organization $Organization `
-                        -ShowBanner:$false
-                    Write-Host "✓ Connected to Security & Compliance Center successfully" -ForegroundColor Green
-                    # Write-Host "Authentication Type: Certificate" -ForegroundColor Cyan
-                } elseIf ($IsLinux -or $IsMacOS) {
-                    Connect-IPPSSession `
-                        -AppId $script:AppConfig.ClientId `
-                        -Certificate $script:AppConfig.Certificate `
-                        -Organization $Organization `
-                        -ShowBanner:$false
-                    Write-Host "✓ Connected to Security & Compliance Center successfully" -ForegroundColor Green
-
-                }
-            }
-            catch {
-                Write-Error "Compliance Center certificate authentication failed: $($_.Exception.Message)"
-                Write-Host "Troubleshooting steps:" -ForegroundColor Yellow
-                Write-Host "• Ensure certificate is uploaded to Azure AD app registration" -ForegroundColor White
-                Write-Host "• Verify app has required Compliance permissions" -ForegroundColor White
-                Write-Host "• Check certificate expiration and validity" -ForegroundColor White
-                Write-Host "• Run: Get-M365AuditCurrentConfig to verify configuration" -ForegroundColor White
-                return $results
-            }
-        }
-        else {
-            Write-Host "✓ Already connected to Security & Compliance Center" -ForegroundColor Green
-        }
-        
-        # Verify connection functionality (without redundant success messages)
-        try {
-            $null = Get-RoleGroup -ErrorAction Stop | Select-Object -First 1
-        }
-        catch {
-            Write-Warning "Security & Compliance Center connection verification failed: $($_.Exception.Message)"
-            Write-Host "Note: Some compliance features may not be available" -ForegroundColor Yellow
-            # Continue anyway as some commands might still work
-        }
-        
-        # Get compliance role groups
-        Write-Host "Retrieving Purview role groups..." -ForegroundColor Cyan
-        $roleGroups = Get-RoleGroup -ErrorAction SilentlyContinue
-        
-        foreach ($roleGroup in $roleGroups) {
-            try {
-                $members = Get-RoleGroupMember -Identity $roleGroup.Identity -ErrorAction SilentlyContinue
-                
-                foreach ($member in $members) {
-                    $results += [PSCustomObject]@{
-                        Service = "Microsoft Purview"
-                        UserPrincipalName = $member.PrimarySmtpAddress
-                        DisplayName = $member.DisplayName
-                        UserId = $null
-                        RoleName = $roleGroup.Name
-                        RoleDefinitionId = $null
-                        AssignmentType = "Role Group Member"
-                        AssignedDateTime = $null
-                        UserEnabled = $null
-                        LastSignIn = $null
-                        Scope = "Organization"
-                        AssignmentId = $roleGroup.Identity
-                        RoleGroupDescription = $roleGroup.Description
-                        AuthenticationType = "Certificate"
-                    }
-                }
-            }
-            catch {
-                Write-Verbose "Could not get members for compliance role group $($roleGroup.Name): $($_.Exception.Message)"
-            }
-        }
-        
-        # Get DLP policy administrators and other compliance-specific roles
-        try {
-            Write-Host "Retrieving DLP and compliance policy roles..." -ForegroundColor Cyan
-            
-            # Get DLP policies and their owners/assignees
-            $dlpPolicies = Get-DlpPolicy -ErrorAction SilentlyContinue
-            foreach ($policy in $dlpPolicies) {
-                if ($policy.CreatedBy) {
-                    $results += [PSCustomObject]@{
-                        Service = "Microsoft Purview"
-                        UserPrincipalName = $policy.CreatedBy
-                        DisplayName = $policy.CreatedBy
-                        UserId = $null
-                        RoleName = "DLP Policy Creator"
-                        RoleDefinitionId = $null
-                        AssignmentType = "Policy Owner"
-                        AssignedDateTime = $policy.WhenCreated
-                        UserEnabled = $null
-                        LastSignIn = $null
-                        Scope = $policy.Name
-                        AssignmentId = $policy.Identity
-                        PolicyMode = $policy.Mode
-                        PolicyState = $policy.Enabled
-                        AuthenticationType = "Certificate"
-                    }
-                }
+            # Connect to Microsoft Graph
+            $context = Get-MgContext
+            if (-not $context -or $context.AuthType -ne "AppOnly") {
+                $null = Connect-MgGraph -TenantId $script:AppConfig.TenantId -ClientId $script:AppConfig.ClientId -CertificateThumbprint $script:AppConfig.CertificateThumbprint -NoWelcome
             }
             
-            # Get retention policies and their creators
-            $retentionPolicies = Get-RetentionCompliancePolicy -ErrorAction SilentlyContinue
-            foreach ($policy in $retentionPolicies) {
-                if ($policy.CreatedBy) {
-                    $results += [PSCustomObject]@{
-                        Service = "Microsoft Purview"
-                        UserPrincipalName = $policy.CreatedBy
-                        DisplayName = $policy.CreatedBy
-                        UserId = $null
-                        RoleName = "Retention Policy Creator"
-                        RoleDefinitionId = $null
-                        AssignmentType = "Policy Owner"
-                        AssignedDateTime = $policy.WhenCreated
-                        UserEnabled = $null
-                        LastSignIn = $null
-                        Scope = $policy.Name
-                        AssignmentId = $policy.Identity
-                        PolicyType = "Retention"
-                        AuthenticationType = "Certificate"
-                    }
-                }
-            }
+            $roleDefinitions = Get-MgRoleManagementDirectoryRoleDefinition | Where-Object { $_.DisplayName -in $rolesToInclude }
+            $assignments = Get-MgRoleManagementDirectoryRoleAssignment | Where-Object { $_.RoleDefinitionId -in $roleDefinitions.Id }
             
-            # Get retention rules
-            $retentionRules = Get-RetentionComplianceRule -ErrorAction SilentlyContinue
-            foreach ($rule in $retentionRules) {
-                if ($rule.CreatedBy) {
-                    $results += [PSCustomObject]@{
-                        Service = "Microsoft Purview"
-                        UserPrincipalName = $rule.CreatedBy
-                        DisplayName = $rule.CreatedBy
-                        UserId = $null
-                        RoleName = "Retention Rule Creator"
-                        RoleDefinitionId = $null
-                        AssignmentType = "Rule Owner"
-                        AssignedDateTime = $rule.WhenCreated
-                        UserEnabled = $null
-                        LastSignIn = $null
-                        Scope = $rule.Name
-                        AssignmentId = $rule.Identity
-                        PolicyType = "RetentionRule"
-                        AuthenticationType = "Certificate"
-                    }
-                }
-            }
-        }
-        catch {
-            Write-Verbose "Could not retrieve DLP/compliance policy information: $($_.Exception.Message)"
-        }
-        
-        # Get eDiscovery administrators
-        try {
-            Write-Host "Retrieving eDiscovery administrators..." -ForegroundColor Cyan
-            $eDiscoveryCases = Get-ComplianceCase -ErrorAction SilentlyContinue
-            foreach ($case in $eDiscoveryCases) {
-                $caseMembers = Get-ComplianceCaseMember -Case $case.Identity -ErrorAction SilentlyContinue
-                foreach ($member in $caseMembers) {
-                    $results += [PSCustomObject]@{
-                        Service = "Microsoft Purview"
-                        UserPrincipalName = $member.PrimarySmtpAddress
-                        DisplayName = $member.DisplayName
-                        UserId = $null
-                        RoleName = "eDiscovery Case Member"
-                        RoleDefinitionId = $null
-                        AssignmentType = "Case Assignment"
-                        AssignedDateTime = $null
-                        UserEnabled = $null
-                        LastSignIn = $null
-                        Scope = $case.Name
-                        AssignmentId = $case.Identity
-                        CaseStatus = $case.Status
-                        CaseType = $case.CaseType
-                        AuthenticationType = "Certificate"
-                    }
-                }
-            }
+            Write-Host "Found $($assignments.Count) Azure AD Purview administrative role assignments" -ForegroundColor Green
             
-            # Get eDiscovery Premium cases
-            $ediscoveryPremiumCases = Get-Case -ErrorAction SilentlyContinue
-            foreach ($case in $ediscoveryPremiumCases) {
-                $caseMembers = Get-CaseMember -Case $case.Identity -ErrorAction SilentlyContinue
-                foreach ($member in $caseMembers) {
-                    $results += [PSCustomObject]@{
-                        Service = "Microsoft Purview"
-                        UserPrincipalName = $member.PrimarySmtpAddress
-                        DisplayName = $member.DisplayName
-                        UserId = $null
-                        RoleName = "eDiscovery Premium Case Member"
-                        RoleDefinitionId = $null
-                        AssignmentType = "Case Assignment"
-                        AssignedDateTime = $null
-                        UserEnabled = $null
-                        LastSignIn = $null
-                        Scope = $case.Name
-                        AssignmentId = $case.Identity
-                        CaseStatus = $case.Status
-                        CaseType = "Premium"
-                        AuthenticationType = "Certificate"
+            foreach ($assignment in $assignments) {
+                try {
+                    $roleDefinition = $roleDefinitions | Where-Object { $_.Id -eq $assignment.RoleDefinitionId }
+                    $user = Get-MgUser -UserId $assignment.PrincipalId -Property "UserPrincipalName,DisplayName,AccountEnabled,SignInActivity" -ErrorAction SilentlyContinue
+                    
+                    if ($user) {
+                        # Determine role scope for enhanced deduplication
+                        $roleScope = if ($roleDefinition.DisplayName -in $overarchingRoles) { "Overarching" } else { "Service-Specific" }
+                        
+                        $results += [PSCustomObject]@{
+                            Service = "Microsoft Purview"
+                            UserPrincipalName = $user.UserPrincipalName
+                            DisplayName = $user.DisplayName
+                            UserId = $assignment.PrincipalId
+                            RoleName = $roleDefinition.DisplayName
+                            RoleDefinitionId = $assignment.RoleDefinitionId
+                            RoleScope = $roleScope  # New property for enhanced deduplication
+                            AssignmentType = "Azure AD Role"
+                            AssignedDateTime = $assignment.CreatedDateTime
+                            UserEnabled = $user.AccountEnabled
+                            LastSignIn = $user.SignInActivity.LastSignInDateTime
+                            Scope = "Organization"
+                            AssignmentId = $assignment.Id
+                            AuthenticationType = "Certificate"
+                            PrincipalType = "User"
+                            RoleSource = "AzureAD"
+                            RoleGroupDescription = $roleDefinition.Description
+                        }
                     }
+                }
+                catch {
+                    Write-Verbose "Error processing Azure AD Purview assignment: $($_.Exception.Message)"
                 }
             }
         }
-        catch {
-            Write-Verbose "Could not retrieve eDiscovery case information: $($_.Exception.Message)"
+        
+        Write-Host "✓ Purview administrative role audit completed. Found $($results.Count) administrative role assignments" -ForegroundColor Green
+        
+        # Provide feedback about role filtering
+        if (-not $IncludeAzureADRoles) {
+            Write-Host "  (Excluding overarching Azure AD roles - use -IncludeAzureADRoles to include)" -ForegroundColor Yellow
         }
         
-        # Additional compliance-specific auditing code would continue here...
-        # (Content Search, Information Barriers, Sensitivity Labels, etc.)
-        
-        Write-Host "✓ Purview compliance audit completed" -ForegroundColor Green
-        Write-Host "Found $($results.Count) compliance role assignments and configurations" -ForegroundColor Cyan
-        
-        # Security compliance validation
+        # Display focused results
         Write-Host ""
-        Write-Host "=== Security Compliance Validation ===" -ForegroundColor Green
-        Write-Host "✓ Certificate-based authentication enforced for compliance" -ForegroundColor Green
-        Write-Host "✓ No client secrets used in compliance functions" -ForegroundColor Green
-        Write-Host "✓ Enhanced security posture maintained" -ForegroundColor Green
+        Write-Host "=== Purview Administrative Role Audit Summary ===" -ForegroundColor Green
+        Write-Host "Total administrative assignments found: $($results.Count)" -ForegroundColor White
+        
+        if ($results.Count -gt 0) {
+            $roleSummary = $results | Group-Object RoleName | Sort-Object Count -Descending
+            #$sourceSummary = $results | Group-Object RoleSource
+            $scopeSummary = $results | Group-Object RoleScope
+            
+            Write-Host "Top administrative roles:" -ForegroundColor Cyan
+            foreach ($role in $roleSummary | Select-Object -First 10) {
+                Write-Host "  $($role.Name): $($role.Count) members" -ForegroundColor White
+            }
+            
+            Write-Host "Role scope:" -ForegroundColor Cyan
+            foreach ($scope in $scopeSummary) {
+                Write-Host "  $($scope.Name): $($scope.Count)" -ForegroundColor White
+            }
+        }
+        
+        Write-Host ""
+        Write-Host "=== SCOPE CLARIFICATION ===" -ForegroundColor Green
+        Write-Host "✓ Focused on Purview/Compliance Azure AD administrative roles only" -ForegroundColor Green
+        Write-Host "✓ Included: Compliance Administrator, eDiscovery roles, Information Protection roles" -ForegroundColor Green
+        Write-Host "✓ Included: Role Management, Organization Configuration, Supervisory Review Administrator" -ForegroundColor Green
+        Write-Host "✓ Excluded: Operational roles (Content Search, Export, Preview, etc.)" -ForegroundColor Green
+        Write-Host "✓ Excluded: Read-only roles (View-Only Audit Logs, View-Only Configuration, etc.)" -ForegroundColor Green
+        Write-Host "✓ No Exchange PowerShell connection required - pure Azure AD role audit" -ForegroundColor Green
+        
+        Write-Host ""
+        Write-Host "=== Performance Summary ===" -ForegroundColor Green
+        Write-Host "Authentication: Certificate-based Azure AD only (Secure)" -ForegroundColor White
+        Write-Host "Role System: Azure AD administrative roles only" -ForegroundColor White
+        Write-Host "Scope: Administrative functions only" -ForegroundColor White
         
     }
     catch {
-        Write-Warning "Error auditing Purview roles: $($_.Exception.Message)"
-        Write-Host "Compliance function requirements:" -ForegroundColor Yellow
-        Write-Host "• Certificate-based authentication (required for compliance)" -ForegroundColor White
-        Write-Host "• Compliance Administrator permissions" -ForegroundColor White
-        Write-Host ""
-        Write-Host "Configuration Commands:" -ForegroundColor Cyan
-        Write-Host "• Set-M365AuditCertCredentials -TenantId <id> -ClientId <id> -CertificateThumbprint <thumbprint>" -ForegroundColor White
-        Write-Host "• Get-M365AuditCurrentConfig (to verify setup)" -ForegroundColor White
-        Write-Host "• Get-M365AuditRequiredPermissions (for complete setup guide)" -ForegroundColor White
+        Write-Warning "Error auditing Purview administrative roles: $($_.Exception.Message)"
+        throw
     }
     
     return $results

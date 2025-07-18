@@ -791,7 +791,7 @@ function Get-PrincipalAnalysis {
     param([array]$AuditResults)
     
     return @{
-        users = ($AuditResults | Where-Object { $_.PrincipalType -eq "User" -or (!$_.PrincipalType -and $_.UserPrincipalName -like "*@*") } | Select-Object -Unique UserPrincipalName).Count
+        users = ($AuditResults | Where-Object { $_.PrincipalType -eq "User" -or (!$_.PrincipalType -and $_.UserPrincipalName -like "*@*") }).Count
         servicePrincipals = ($AuditResults | Where-Object { $_.PrincipalType -eq "ServicePrincipal" }).Count
         groups = ($AuditResults | Where-Object { $_.PrincipalType -eq "Group" }).Count
         onPremisesSyncedUsers = ($AuditResults | Where-Object { $_.OnPremisesSyncEnabled -eq $true }).Count

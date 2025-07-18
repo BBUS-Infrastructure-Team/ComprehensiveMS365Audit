@@ -456,6 +456,14 @@ function Export-M365AuditHtmlReport {
         .tag.permanent { background: var(--warning-color); }
         .tag.disabled { background: var(--danger-color); }
         
+        @media (max-width: 768px) {
+            .container { padding: 20px; }
+            .summary-grid { grid-template-columns: 1fr; }
+            .header h1 { font-size: 2em; }
+            table { font-size: 0.9em; }
+            th, td { padding: 10px 8px; }
+        }
+        
         .scroll-to-top {
             position: fixed;
             bottom: 20px;
@@ -475,277 +483,6 @@ function Export-M365AuditHtmlReport {
             background: var(--secondary-color);
             transform: translateY(-2px);
         }
-
-        /* Role Analysis Expandable Rows */
-        .expandable-role-row {
-            cursor: pointer;
-            transition: background-color 0.2s ease;
-        }
-        
-        .expandable-role-row:hover {
-            background-color: #f0f8ff !important;
-        }
-        
-        .expand-indicator {
-            float: right;
-            font-size: 0.8em;
-            color: var(--primary-color);
-            transition: transform 0.3s ease;
-        }
-        
-        .expand-indicator.expanded {
-            transform: rotate(90deg);
-        }
-        
-        .role-assignments-row {
-            background: #f9f9f9 !important;
-        }
-        
-        .assignments-container {
-            padding: 20px;
-            background: #ffffff;
-            border-radius: 8px;
-            margin: 10px 0;
-            box-shadow: inset 0 2px 4px rgba(0,0,0,0.1);
-        }
-        
-        .assignments-title {
-            font-size: 1.1em;
-            font-weight: bold;
-            color: var(--primary-color);
-            margin-bottom: 15px;
-            padding-bottom: 8px;
-            border-bottom: 2px solid var(--primary-color);
-        }
-        
-        .assignments-horizontal {
-            display: flex;
-            flex-wrap: wrap;
-            gap: 12px;
-            padding: 8px 0;
-        }
-        
-        .assignment-chip {
-            background: linear-gradient(135deg, #e3f2fd, #bbdefb);
-            border: 1px solid var(--info-color);
-            border-radius: 20px;
-            padding: 8px 16px;
-            font-size: 0.9em;
-            font-weight: 500;
-            color: #1565c0;
-            white-space: nowrap;
-            transition: all 0.2s ease;
-            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
-        }
-        
-        .assignment-chip:hover {
-            background: linear-gradient(135deg, #bbdefb, #90caf9);
-            transform: translateY(-1px);
-            box-shadow: 0 4px 8px rgba(0,0,0,0.15);
-        }
-        
-        .no-assignments {
-            text-align: center;
-            padding: 20px;
-            color: #666;
-            font-style: italic;
-            background: #f9f9f9;
-            border-radius: 8px;
-        }
-
-        /* User Analysis Expandable Rows */
-        .expandable-user-row {
-            cursor: pointer;
-            transition: background-color 0.2s ease;
-        }
-        
-        .expandable-user-row:hover {
-            background-color: #f0f8ff !important;
-        }
-        
-        .user-roles-row {
-            background: #f9f9f9 !important;
-        }
-        
-        .user-roles-cell {
-            padding: 20px;
-            background: #ffffff;
-            border-radius: 8px;
-            margin: 10px 0;
-            box-shadow: inset 0 2px 4px rgba(0,0,0,0.1);
-        }
-        
-        .user-roles-title {
-            font-size: 1.1em;
-            font-weight: bold;
-            color: var(--primary-color);
-            margin-bottom: 15px;
-            padding-bottom: 8px;
-            border-bottom: 2px solid var(--primary-color);
-        }
-        
-        /* Enhanced styles for compact user role display */
-        .user-roles-container {
-            display: flex;
-            flex-direction: column;
-            gap: 8px;
-            padding: 10px 0;
-        }
-
-        .service-group-compact {
-            margin-bottom: 12px;
-        }
-
-        .service-header-compact {
-            font-weight: bold;
-            color: var(--primary-color);
-            font-size: 0.9em;
-            margin-bottom: 4px;
-            padding: 4px 0;
-            border-bottom: 1px solid #e1dfdd;
-        }
-
-        .roles-list-compact {
-            margin-left: 16px;
-            list-style: none;
-            padding: 0;
-        }
-
-        .role-item-compact {
-            padding: 2px 0;
-            font-size: 0.85em;
-            color: #333;
-            display: flex;
-            align-items: center;
-            gap: 8px;
-        }
-
-        .role-item-compact::before {
-            content: "•";
-            color: var(--primary-color);
-            font-weight: bold;
-            width: 8px;
-        }
-
-        .role-badge-mini {
-            display: inline-block;
-            background: var(--info-color);
-            color: white;
-            padding: 1px 6px;
-            border-radius: 8px;
-            font-size: 0.7em;
-            font-weight: 500;
-            margin-left: auto;
-        }
-
-        .role-badge-mini.pim-eligible {
-            background: var(--success-color);
-        }
-
-        .role-badge-mini.pim-active {
-            background: var(--warning-color);
-        }
-
-        .role-badge-mini.permanent {
-            background: var(--primary-color);
-        }
-
-        /* Service header colors for compact view */
-        .service-header-compact.azure { color: #0078d4; border-bottom-color: #0078d4; }
-        .service-header-compact.sharepoint { color: #0b6623; border-bottom-color: #0b6623; }
-        .service-header-compact.exchange { color: #d13438; border-bottom-color: #d13438; }
-        .service-header-compact.teams { color: #464775; border-bottom-color: #464775; }
-        .service-header-compact.purview { color: #8b4789; border-bottom-color: #8b4789; }
-        .service-header-compact.intune { color: #00bcf2; border-bottom-color: #00bcf2; }
-        .service-header-compact.defender { color: #ff8c00; border-bottom-color: #ff8c00; }
-        .service-header-compact.powerplatform { color: #742774; border-bottom-color: #742774; }  
-                
-        /* Mobile Responsive */
-        @media (max-width: 768px) {
-            .container { padding: 20px; }
-            .summary-grid { grid-template-columns: 1fr; }
-            .header h1 { font-size: 2em; }
-            table { font-size: 0.9em; }
-            th, td { padding: 10px 8px; }
-            
-            .assignment-chip {
-                font-size: 0.8em;
-                padding: 6px 12px;
-            }
-            
-            .assignments-horizontal {
-                gap: 8px;
-            }
-            
-            .service-group-header {
-                font-size: 0.8em;
-                padding: 10px 12px;
-            }
-            
-            .role-item {
-                font-size: 0.8em;
-                padding: 6px 10px;
-            }
-        }
-
-        .assignments-section {
-            display: flex;
-            flex-direction: column;
-            gap: 12px;
-        }
-        
-        .assignments-legend {
-            display: flex;
-            gap: 20px;
-            padding: 8px 12px;
-            background: #f8f9fa;
-            border-radius: 6px;
-            border: 1px solid #e9ecef;
-            font-size: 0.85em;
-            justify-content: center;
-        }
-        
-        .legend-item {
-            display: flex;
-            align-items: center;
-            gap: 6px;
-            font-weight: 500;
-        }
-        
-        .legend-color {
-            width: 12px;
-            height: 12px;
-            border-radius: 50%;
-            border: 1px solid rgba(0,0,0,0.2);
-        }
-        
-        .legend-color.active {
-            background: linear-gradient(135deg, #e3f2fd, #bbdefb);
-        }
-        
-        .legend-color.eligible {
-            background: linear-gradient(135deg, #fff3e0, #ffcc80);
-        }
-        
-        .assignment-chip.active {
-            background: linear-gradient(135deg, #e3f2fd, #bbdefb);
-            border: 1px solid var(--info-color);
-            color: #1565c0;
-        }
-        
-        .assignment-chip.eligible {
-            background: linear-gradient(135deg, #fff3e0, #ffcc80);
-            border: 1px solid var(--warning-color);
-            color: #ef6c00;
-        }
-        
-        .assignment-chip.active:hover {
-            background: linear-gradient(135deg, #bbdefb, #90caf9);
-        }
-        
-        .assignment-chip.eligible:hover {
-            background: linear-gradient(135deg, #ffcc80, #ffb74d);
-        }
     </style>
     <script>
         function toggleSection(id) {
@@ -759,36 +496,6 @@ function Export-M365AuditHtmlReport {
         
         function scrollToTop() {
             window.scrollTo({ top: 0, behavior: 'smooth' });
-        }
-
-        function toggleRoleAssignments(roleId) {
-            const assignmentsRow = document.getElementById('roleAssignments_' + roleId);
-            const expandIndicator = event.currentTarget.querySelector('.expand-indicator');
-            
-            if (assignmentsRow.style.display === 'none' || assignmentsRow.style.display === '') {
-                assignmentsRow.style.display = 'table-row';
-                expandIndicator.textContent = '▼';
-                expandIndicator.classList.add('expanded');
-            } else {
-                assignmentsRow.style.display = 'none';
-                expandIndicator.textContent = '▶';
-                expandIndicator.classList.remove('expanded');
-            }
-        }
-
-        function toggleUserRoles(userId) {
-            const rolesRow = document.getElementById('userRoles_' + userId);
-            const expandIndicator = event.currentTarget.querySelector('.expand-indicator');
-            
-            if (rolesRow.style.display === 'none' || rolesRow.style.display === '') {
-                rolesRow.style.display = 'table-row';
-                expandIndicator.textContent = '▼';
-                expandIndicator.classList.add('expanded');
-            } else {
-                rolesRow.style.display = 'none';
-                expandIndicator.textContent = '▶';
-                expandIndicator.classList.remove('expanded');
-            }
         }
         
         document.addEventListener('DOMContentLoaded', function() {
@@ -809,7 +516,7 @@ function Export-M365AuditHtmlReport {
     <div class="container">
         <div class="header">
             <h1>Microsoft 365 Comprehensive Role Audit</h1>
-            <p>$OrganizationName | Generated on $(Get-Date -Format "MMMM dd, yyyy 'at' HH:mm")</p>
+            <p>$OrganizationName | Generated on $(Get-Date -Format 'MMMM dd, yyyy at HH:mm')</p>
         </div>
         
         <div class="metadata">
@@ -959,7 +666,7 @@ function Export-M365AuditHtmlReport {
         <div class="section">
             <h2>📊 Service Distribution</h2>
             <table>
-                <tr><th>Service</th><th>Assignments</th><th>Percentage</th></tr>
+                <tr><th>Service</th><th>Assignments</th><th>Percentage</th><th>Authentication</th></tr>
 "@
 
     # Service breakdown using helper function data
@@ -976,11 +683,16 @@ function Export-M365AuditHtmlReport {
             default { "service-azure" }
         }
         
+        # Get primary auth type for this service
+        $serviceResults = $AuditResults | Where-Object { $_.Service -eq $service.service }
+        $primaryAuth = ($serviceResults | Group-Object AuthenticationType | Sort-Object Count -Descending | Select-Object -First 1).Name
+        
         $html += @"
 <tr>
     <td><span class='service-badge $serviceClass'>$($service.service)</span></td>
     <td><strong>$($service.count)</strong></td>
     <td>$($service.percentage)%</td>
+    <td><span class='tag $(if($primaryAuth -eq "Certificate") {"pim"} else {"permanent"})'>$primaryAuth</span></td>
 </tr>
 "@
     }
@@ -995,7 +707,7 @@ function Export-M365AuditHtmlReport {
                 <tr><th>Role Name</th><th>Users Assigned</th><th>Risk Level</th><th>Services</th></tr>
 "@
 
-        # Top roles using helper function data
+    # Top roles using helper function data
     foreach ($role in $summary.topRoles) {
         $riskClass = switch ($role.riskLevel) {
             "CRITICAL" { "privilege-high" }
@@ -1007,59 +719,12 @@ function Export-M365AuditHtmlReport {
         $servicesDisplay = ($role.services | Select-Object -First 3) -join ", "
         if ($role.services.Count -gt 3) { $servicesDisplay += "..." }
         
-        # Get role users using the helper function
-        $roleUsers = Get-RoleUsers -AuditResults $AuditResults -RoleName $role.roleName
-        $roleId = ($role.roleName -replace '[^a-zA-Z0-9]', '')
-        
-# Build simple assignments list with PIM differentiation
-        $assignmentsGrid = ""
-        if ($roleUsers.Count -gt 0) {
-            # Count different assignment types for legend
-            $activeCount = ($roleUsers | Where-Object { $_.assignmentType -notlike "*Eligible*" }).Count
-            $eligibleCount = ($roleUsers | Where-Object { $_.assignmentType -like "*Eligible*" }).Count
-            
-            $assignmentsGrid = "<div class='assignments-section'>"
-            $assignmentsGrid += "<div class='assignments-horizontal'>"
-            
-            foreach ($user in $roleUsers) {
-                $chipClass = if ($user.assignmentType -like "*Eligible*") { "assignment-chip eligible" } else { "assignment-chip active" }
-                $assignmentsGrid += "<div class='$chipClass'>$($user.displayName)</div>"
-            }
-            $assignmentsGrid += "</div>"
-            
-            # Add legend at the bottom if there are both types
-            if ($activeCount -gt 0 -and $eligibleCount -gt 0) {
-                $assignmentsGrid += "<div class='assignments-legend'>"
-                $assignmentsGrid += "<span class='legend-item'><span class='legend-color active'></span> Active Assignments ($activeCount)</span>"
-                $assignmentsGrid += "<span class='legend-item'><span class='legend-color eligible'></span> PIM Eligible ($eligibleCount)</span>"
-                $assignmentsGrid += "</div>"
-            } elseif ($eligibleCount -gt 0) {
-                $assignmentsGrid += "<div class='assignments-legend'>"
-                $assignmentsGrid += "<span class='legend-item'><span class='legend-color eligible'></span> PIM Eligible ($eligibleCount)</span>"
-                $assignmentsGrid += "</div>"
-            } elseif ($activeCount -gt 0) {
-                $assignmentsGrid += "<div class='assignments-legend'>"
-                $assignmentsGrid += "<span class='legend-item'><span class='legend-color active'></span> Active Assignments ($activeCount)</span>"
-                $assignmentsGrid += "</div>"
-            }
-            
-            $assignmentsGrid += "</div>"
-        } else {
-            $assignmentsGrid = "<div class='no-assignments'>No assignments found</div>"
-        }
-        
         $html += @"
-<tr class='$riskClass expandable-role-row' onclick="toggleRoleAssignments('$roleId')">
-    <td><strong>$($role.roleName)</strong> <span class='expand-indicator'>▶</span></td>
+<tr class='$riskClass'>
+    <td><strong>$($role.roleName)</strong></td>
     <td>$($role.assignmentCount)</td>
     <td><span class='tag $(if($role.riskLevel -eq "CRITICAL") {"disabled"} elseif($role.riskLevel -eq "HIGH") {"permanent"} else {"pim"})'>$($role.riskLevel)</span></td>
     <td><small>$servicesDisplay</small></td>
-</tr>
-<tr id="roleAssignments_$roleId" class="role-assignments-row" style="display: none;">
-    <td colspan="4" class="assignments-container">
-        <div class="assignments-title">Role Assignments for $($role.roleName)</div>
-        $assignmentsGrid
-    </td>
 </tr>
 "@
     }
@@ -1070,8 +735,12 @@ function Export-M365AuditHtmlReport {
 
         <div class="section">
             <h2>👥 User Analysis</h2>
-            <table>
-                <tr><th>User</th><th>Role Count</th><th>Status</th><th>Services</th></tr>
+            <div class="expandable" onclick="toggleSection('userDetails')">
+                <h3 style="cursor: pointer; color: var(--primary-color);">▶ Users with Most Role Assignments (Click to expand)</h3>
+            </div>
+            <div id="userDetails" class="expandable-content">
+                <table>
+                    <tr><th>User</th><th>Role Count</th><th>Status</th><th>Services</th></tr>
 "@
 
     # User analysis using helper function data
@@ -1082,77 +751,19 @@ function Export-M365AuditHtmlReport {
         $servicesDisplay = ($user.services | Select-Object -First 3) -join ", "
         if ($user.services.Count -gt 3) { $servicesDisplay += " +$($user.services.Count - 3) more" }
         
-        # Get user roles grouped by service using helper function
-        $userRoles = Get-UserRoles -AuditResults $AuditResults -UserPrincipalName $user.userPrincipalName
-        $userId = ($user.userPrincipalName -replace '[^a-zA-Z0-9]', '')
-        
-                $serviceGroupedRoles = ""
-        if ($userRoles.Count -gt 0) {
-            $rolesByService = $userRoles | Group-Object Service | Sort-Object Name
-            $serviceGroupedRoles = "<div class='user-roles-container'>"
-            
-            foreach ($serviceGroup in $rolesByService) {
-                # Determine service class for color coding
-                $serviceClass = switch ($serviceGroup.Name) {
-                    "Azure AD/Entra ID" { "azure" }
-                    "SharePoint Online" { "sharepoint" }
-                    "Exchange Online" { "exchange" }
-                    "Microsoft Teams" { "teams" }
-                    "Microsoft Purview" { "purview" }
-                    "Microsoft Intune" { "intune" }
-                    "Microsoft Defender" { "defender" }
-                    "Power Platform" { "powerplatform" }
-                    default { "azure" }
-                }
-                
-                $serviceGroupedRoles += "<div class='service-group-compact'>"
-                $serviceGroupedRoles += "<div class='service-header-compact $serviceClass'>$($serviceGroup.Name)</div>"
-                $serviceGroupedRoles += "<ul class='roles-list-compact'>"
-                
-                foreach ($role in $serviceGroup.Group | Sort-Object RoleName) {
-                    # Determine assignment type badge
-                    $badgeClass = "permanent"
-                    $badgeText = "Active"
-                    
-                    if ($role.AssignmentType -like "*Eligible*") {
-                        $badgeClass = "pim-eligible"
-                        $badgeText = "PIM Eligible"
-                    } elseif ($role.AssignmentType -like "*PIM*") {
-                        $badgeClass = "pim-active"
-                        $badgeText = "PIM Active"
-                    }
-                    
-                    $serviceGroupedRoles += "<li class='role-item-compact'>"
-                    $serviceGroupedRoles += "<span>$($role.RoleName)</span>"
-                    $serviceGroupedRoles += "<span class='role-badge-mini $badgeClass'>$badgeText</span>"
-                    $serviceGroupedRoles += "</li>"
-                }
-                
-                $serviceGroupedRoles += "</ul></div>"
-            }
-                $serviceGroupedRoles += "</div>"
-        } else {
-            $serviceGroupedRoles = "<div class='no-roles'>No roles found</div>"
-        }
-            
         $html += @"
-<tr class='expandable-user-row' onclick="toggleUserRoles('$userId')">
-    <td $statusColor><strong>$($user.displayName)</strong><br><small style='color: #666;'>$($user.userPrincipalName)</small> <span class='expand-indicator'>▶</span></td>
+<tr>
+    <td $statusColor>$($user.userPrincipalName)</td>
     <td><strong>$($user.roleCount)</strong></td>
     <td><span class='tag $(if($status -eq "DISABLED") {"disabled"} else {"pim"})' $statusColor>$status</span></td>
     <td><small>$servicesDisplay</small></td>
-</tr>
-<tr id="userRoles_$userId" class="user-roles-row" style="display: none;">
-    <td colspan="4" class="user-roles-cell">
-        <div class="user-roles-title">Roles assigned to: $($user.displayName)</div>
-        $serviceGroupedRoles
-    </td>
 </tr>
 "@
     }
 
     $html += @"
-            </table>
+                </table>
+            </div>
         </div>
 
         <div class="section">
@@ -1200,12 +811,9 @@ function Export-M365AuditHtmlReport {
             <div class="alert-grid">
 "@
 
-# Service-specific insights using helper function data
+    # Service-specific insights using helper function data
     foreach ($serviceName in $serviceAnalysis.Keys) {
         $serviceData = $serviceAnalysis[$serviceName]
-        
-        # Get PIM counts for this service using helper function
-        $pimCounts = Get-ServicePIMCounts -AuditResults $AuditResults -ServiceName $serviceName
         
         # Determine service-specific color and icon
         $serviceInfo = switch ($serviceName) {
@@ -1225,8 +833,6 @@ function Export-M365AuditHtmlReport {
                     <h3 style="color: $($serviceInfo.color);">$($serviceInfo.icon) $serviceName Analysis</h3>
                     <div class="alert-item">📊 Total Assignments: $($serviceData.totalAssignments)</div>
                     <div class="alert-item">👥 Unique Users: $($serviceData.uniqueUsers)</div>
-                    <div class="alert-item">🔴 PIM Active: $($pimCounts.pimActive)</div>
-                    <div class="alert-item">🟢 PIM Eligible: $($pimCounts.pimEligible)</div>
                     <div class="alert-item">🎯 Top Role: $($serviceData.topRole)</div>
 "@
         
@@ -1437,13 +1043,13 @@ function Export-M365AuditHtmlReport {
                     <div class="stat-label">Account Cleanup</div>
                     <small>$($complianceAnalysis.privilegedAccessCompliance.disabledAccountCleanup.violationCount) violations</small>
                 </div>
-                <!-- <div class="stat-item">
+                <div class="stat-item">
                     <div class="stat-number" style="color: $(if($complianceAnalysis.authenticationCompliance.certificateBasedAuth.compliant) {'var(--success-color)'} else {'var(--warning-color)'});">
                         $($complianceAnalysis.authenticationCompliance.certificateBasedAuth.percentage)%
                     </div>
                     <div class="stat-label">Certificate Auth Usage</div>
                     <small>Secure authentication percentage</small>
-                </div> -->
+                </div>
             </div>
         </div>
 "@

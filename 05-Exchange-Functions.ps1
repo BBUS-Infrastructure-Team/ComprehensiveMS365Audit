@@ -1,7 +1,5 @@
 # 05-Exchange-Functions.ps1 - REWRITTEN VERSION
-# Exchange Online privileged role audit - Certificate Authentication Only
-# No separate runspace needed - direct execution
-
+# Updated Get-ExchangeRoleAudit function with proper Azure AD role filtering
 function Get-ExchangeRoleAudit {
     param(
         [Parameter(Mandatory = $true)]
@@ -13,7 +11,9 @@ function Get-ExchangeRoleAudit {
         
         [string]$CertificateThumbprint,
 
-        [switch]$Summary
+        [switch]$Summary,
+
+        [switch]$IncludeAzureADRoles  # New parameter to control inclusion of overarching roles
     )
     
     $results = @()
@@ -56,15 +56,34 @@ function Get-ExchangeRoleAudit {
             Write-Host "✓ Connected with certificate authentication" -ForegroundColor Green
         }
         
-        # Exchange privileged roles in Azure AD
-        $exchangePrivilegedRoles = @(
-            "Exchange Administrator",
-            "Exchange Recipient Administrator", 
-            "Global Administrator"  # Include Global Admin as it has Exchange rights
+        # Exchange-specific Azure AD roles (NOT overarching roles)
+        $exchangeSpecificRoles = @(
+            "Exchange Service Administrator"  # Legacy name for Exchange Administrator
         )
         
-        $roleDefinitions = Get-MgRoleManagementDirectoryRoleDefinition | Where-Object { $_.DisplayName -in $exchangePrivilegedRoles }
-        Write-Host "Found $($roleDefinitions.Count) Exchange privileged role definitions in Azure AD" -ForegroundColor Green
+        # Overarching roles that should only appear in Azure AD audit
+        $overarchingRoles = @(
+            "Exchange Administrator",
+            "Global Administrator",
+            "Security Administrator",
+            "Security Reader",
+            "Cloud Application Administrator",
+            "Application Administrator",
+            "Privileged Authentication Administrator",
+            "Privileged Role Administrator",
+            "Compliance Administrator",
+            "Compliance Data Administrator"
+        )
+        
+        # Determine which roles to include based on parameter
+        $rolesToInclude = if ($IncludeAzureADRoles) {
+            $exchangeSpecificRoles + $overarchingRoles
+        } else {
+            $exchangeSpecificRoles
+        }
+        
+        $roleDefinitions = Get-MgRoleManagementDirectoryRoleDefinition | Where-Object { $_.DisplayName -in $rolesToInclude }
+        Write-Host "Found $($roleDefinitions.Count) Exchange-related role definitions in Azure AD" -ForegroundColor Green
         
         # Get ALL assignment types (regular + PIM eligible + PIM active)
         $allAssignments = @()
@@ -160,8 +179,24 @@ function Get-ExchangeRoleAudit {
                     catch { }
                 }
                 
+                # Try as service principal if still unknown
+                if ($principalInfo.PrincipalType -eq "Unknown") {
+                    try {
+                        $servicePrincipal = Get-MgServicePrincipal -ServicePrincipalId $assignment.PrincipalId -ErrorAction SilentlyContinue
+                        if ($servicePrincipal) {
+                            $principalInfo.UserPrincipalName = $servicePrincipal.AppId
+                            $principalInfo.DisplayName = "$($servicePrincipal.DisplayName) (Application)"
+                            $principalInfo.PrincipalType = "ServicePrincipal"
+                        }
+                    }
+                    catch { }
+                }
+                
+                # Determine role scope for enhanced deduplication
+                $roleScope = if ($role.DisplayName -in $overarchingRoles) { "Overarching" } else { "Service-Specific" }
+                
                 # Include both users and groups (critical for hybrid environments)
-                if ($principalInfo.PrincipalType -eq "User" -or $principalInfo.PrincipalType -eq "Group") {
+                if ($principalInfo.PrincipalType -eq "User" -or $principalInfo.PrincipalType -eq "Group" -or $principalInfo.PrincipalType -eq "ServicePrincipal") {
                     $results += [PSCustomObject]@{
                         Service = "Exchange Online"
                         UserPrincipalName = $principalInfo.UserPrincipalName
@@ -169,6 +204,7 @@ function Get-ExchangeRoleAudit {
                         UserId = $principalInfo.UserId
                         RoleName = $role.DisplayName
                         RoleDefinitionId = $assignment.RoleDefinitionId
+                        RoleScope = $roleScope  # New property for enhanced deduplication
                         AssignmentType = $assignmentType
                         AssignedDateTime = $assignment.CreatedDateTime
                         UserEnabled = $principalInfo.UserEnabled
@@ -199,15 +235,29 @@ function Get-ExchangeRoleAudit {
         Write-Host "Retrieving Exchange role groups..." -ForegroundColor Cyan
         
         # Check if connected to Exchange Online
-        $exchangeSession = Get-PSSession | Where-Object { $_.ComputerName -like "*outlook.office365.com*" -and $_.State -eq "Opened" }
-        if (-not $exchangeSession) {
+        
+        $EXOSession = Get-ConnectionInformation | Where-Object { $_.connectionUrl -like "*outlook*" -and $_.State -eq 'Connected' }
+
+        if (-not $EXOSession) {
             Write-Host "Connecting to Exchange Online with certificate authentication..." -ForegroundColor Yellow
             
             try {
                 # Use script variables for connection
-                $null = Connect-ExchangeOnline -AppId $script:AppConfig.ClientId -CertificateThumbprint $script:AppConfig.CertificateThumbprint -Organization $Organization -ShowBanner:$false
-                Write-Host "✓ Connected to Exchange Online successfully" -ForegroundColor Green
-                Write-Host "Authentication Type: Certificate" -ForegroundColor Cyan
+                if ($IsWindows) {
+                    $null = Connect-ExchangeOnline `
+                        -AppId $script:AppConfig.ClientId `
+                        -CertificateThumbprint $script:AppConfig.CertificateThumbprint `
+                        -Organization $Organization `
+                        -ShowBanner:$false
+                    Write-Host "✓ Connected to Exchange Online successfully" -ForegroundColor Green
+                    Write-Host "Authentication Type: Certificate" -ForegroundColor Cyan
+                } elseif ($IsLinux -or $IsMacOS) {
+                    $null = Connect-ExchangeOnline `
+                        -AppId $script:AppConfig.ClientId `
+                        -Certificate $script:AppConfig.Certificate `
+                        -Organization $Organization `
+                        -ShowBanner:$false
+                }
             }
             catch {
                 Write-Error "Exchange Online certificate authentication failed: $($_.Exception.Message)"
@@ -296,6 +346,7 @@ function Get-ExchangeRoleAudit {
                             UserId = $member.ExternalDirectoryObjectId
                             RoleName = $group.Name
                             RoleDefinitionId = $group.Guid
+                            RoleScope = "Service-Specific"  # Exchange role groups are service-specific
                             AssignmentType = "Role Group Member"
                             AssignedDateTime = $null
                             UserEnabled = $userEnabled
@@ -346,6 +397,7 @@ function Get-ExchangeRoleAudit {
                         UserId = $null
                         RoleName = $assignment.Role
                         RoleDefinitionId = $null
+                        RoleScope = "Service-Specific"  # Direct assignments are service-specific
                         AssignmentType = "Direct Assignment"
                         AssignedDateTime = $assignment.WhenCreated
                         UserEnabled = $null
@@ -376,6 +428,11 @@ function Get-ExchangeRoleAudit {
         
         Write-Host "✓ Exchange Online privileged role audit completed" -ForegroundColor Green
         
+        # Provide feedback about role filtering
+        if (-not $IncludeAzureADRoles) {
+            Write-Host "  (Excluding overarching Azure AD roles - use -IncludeAzureADRoles to include)" -ForegroundColor Yellow
+        }
+        
         if ($Summary) {
             # Summary of results
             $azureADRoles = $results | Where-Object { $_.RoleSource -eq "AzureAD" }
@@ -401,6 +458,13 @@ function Get-ExchangeRoleAudit {
                 $assignmentTypes = $results | Group-Object AssignmentType
                 foreach ($type in $assignmentTypes) {
                     Write-Host "  $($type.Name): $($type.Count)" -ForegroundColor White
+                }
+                
+                Write-Host ""
+                Write-Host "Role Scope Breakdown:" -ForegroundColor Cyan
+                $scopeTypes = $results | Group-Object RoleScope
+                foreach ($scope in $scopeTypes) {
+                    Write-Host "  $($scope.Name): $($scope.Count)" -ForegroundColor White
                 }
                 
                 # Show top roles and highlight group assignments

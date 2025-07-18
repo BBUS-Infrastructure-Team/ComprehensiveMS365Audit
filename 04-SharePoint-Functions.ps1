@@ -1,6 +1,6 @@
 # 04-SharePoint-Functions.ps1
-# SharePoint Online ADMINISTRATIVE role audit functions - Certificate Authentication Only
-# Fixed to focus on administrative roles only, not individual site permissions
+# Updated Get-SharePointRoleAudit function focused ONLY on administrative roles
+# Removed: Site-level permissions, Search Center admins, Term Store access verification
 
 function Get-SharePointRoleAudit {
     param(
@@ -9,7 +9,8 @@ function Get-SharePointRoleAudit {
         
         [string]$TenantId,
         [string]$ClientId,
-        [string]$CertificateThumbprint
+        [string]$CertificateThumbprint,
+        [switch]$IncludeAzureADRoles  # New parameter to control inclusion of overarching roles
     )
     
     $results = @()
@@ -49,8 +50,6 @@ function Get-SharePointRoleAudit {
             
             Write-Host "✓ Connected to SharePoint admin center successfully with certificate authentication" -ForegroundColor Green
             Write-Host "Authentication Type: Certificate" -ForegroundColor Cyan
-            # Write-Host "Client ID: $($script:AppConfig.ClientId)" -ForegroundColor Gray
-            # Write-Host "Certificate Thumbprint: $($script:AppConfig.CertificateThumbprint)" -ForegroundColor Gray
         }
         catch {
             Write-Error "SharePoint certificate authentication failed: $($_.Exception.Message)"
@@ -62,47 +61,52 @@ function Get-SharePointRoleAudit {
             throw "SharePoint connection failed with certificate authentication"
         }
         
-        # === FOCUS ON ADMINISTRATIVE ROLES ONLY ===
-        Write-Host "Retrieving SharePoint administrative roles..." -ForegroundColor Cyan
+        # === ENHANCED AZURE AD ROLE FILTERING ===
+        Write-Host "Retrieving SharePoint-related Azure AD administrative roles..." -ForegroundColor Cyan
         
-        # 1. Verify SharePoint tenant access
-        Write-Host "Verifying SharePoint tenant access..." -ForegroundColor Cyan
-        try {
-            # Verify admin center connection and access
-            $adminCenterUrl = $TenantUrl
-            Connect-PnPOnline -Url $adminCenterUrl -ClientId $script:AppConfig.ClientId -Thumbprint $script:AppConfig.CertificateThumbprint -Tenant $script:AppConfig.TenantId
+        # Connect to Microsoft Graph if not already connected with certificate auth
+        $context = Get-MgContext
+        if (-not $context -or $context.AuthType -ne "AppOnly") {
+            Write-Host "Connecting to Microsoft Graph for SharePoint administrative roles..." -ForegroundColor Yellow
             
-            # Get tenant properties to verify administrative access
-            $tenantProperties = Get-PnPTenant -ErrorAction SilentlyContinue
-            if ($tenantProperties) {
-                Write-Host "✓ Successfully accessed tenant properties" -ForegroundColor Green
-            }
+            Connect-MgGraph -TenantId $script:AppConfig.TenantId -ClientId $script:AppConfig.ClientId -CertificateThumbprint $script:AppConfig.CertificateThumbprint -NoWelcome
             
-        }
-        catch {
-            Write-Verbose "Could not access tenant properties: $($_.Exception.Message)"
-        }
-        
-        # 2. Get SharePoint-related Azure AD roles using Microsoft Graph
-        Write-Host "Retrieving SharePoint-related Azure AD roles..." -ForegroundColor Cyan
-        try {
-            # Connect to Microsoft Graph if not already connected
+            # Verify app-only authentication
             $context = Get-MgContext
-            if (-not $context -or $context.AuthType -ne "AppOnly") {
-                Connect-MgGraph -TenantId $script:AppConfig.TenantId -ClientId $script:AppConfig.ClientId -CertificateThumbprint $script:AppConfig.CertificateThumbprint -NoWelcome
+            if ($context.AuthType -ne "AppOnly") {
+                throw "Expected app-only authentication but got: $($context.AuthType). Check certificate configuration."
             }
             
-            # SharePoint-related Azure AD roles
-            $sharePointRoles = @(
-                "SharePoint Administrator",
-                "SharePoint Service Administrator",  # Legacy name
-                "Global Administrator",
-                "Application Administrator",
-                "Cloud Application Administrator"
-            )
-            
-            $roleDefinitions = Get-MgRoleManagementDirectoryRoleDefinition | Where-Object { $_.DisplayName -in $sharePointRoles }
-            Write-Host "Found $($roleDefinitions.Count) SharePoint-related role definitions" -ForegroundColor Green
+            Write-Host "✓ Connected to Microsoft Graph with certificate authentication" -ForegroundColor Green
+        }
+        
+        # SharePoint-specific Azure AD roles (NOT overarching roles)
+        $sharePointSpecificRoles = @(
+            "SharePoint Service Administrator",  # Legacy name for SharePoint Administrator
+            "SharePoint Administrator"
+        )
+        
+        # Overarching roles that should only appear in Azure AD audit
+        $overarchingRoles = @(
+            "Global Administrator",
+            "Security Administrator",
+            "Security Reader",
+            "Cloud Application Administrator",
+            "Application Administrator",
+            "Privileged Authentication Administrator",
+            "Privileged Role Administrator"
+        )
+        
+        # Determine which roles to include based on parameter
+        $rolesToInclude = if ($IncludeAzureADRoles) {
+            $sharePointSpecificRoles + $overarchingRoles
+        } else {
+            $sharePointSpecificRoles
+        }
+        
+        try {
+            $roleDefinitions = Get-MgRoleManagementDirectoryRoleDefinition | Where-Object { $_.DisplayName -in $rolesToInclude }
+            Write-Host "Found $($roleDefinitions.Count) SharePoint-related administrative role definitions" -ForegroundColor Green
             
             # Get ALL assignment types (regular + PIM eligible + PIM active)
             $allAssignments = @()
@@ -110,7 +114,7 @@ function Get-SharePointRoleAudit {
             # Regular assignments
             $regularAssignments = Get-MgRoleManagementDirectoryRoleAssignment | Where-Object { $_.RoleDefinitionId -in $roleDefinitions.Id }
             if ($regularAssignments) { $allAssignments += $regularAssignments }
-            Write-Host "Found $($regularAssignments.Count) regular SharePoint role assignments" -ForegroundColor Gray
+            Write-Host "Found $($regularAssignments.Count) regular SharePoint administrative role assignments" -ForegroundColor Gray
             
             # PIM eligible assignments
             try {
@@ -121,7 +125,7 @@ function Get-SharePointRoleAudit {
                     }
                 }
                 $pimEligibleCount = ($allAssignments | Where-Object { $_.PSObject.TypeNames -contains "Microsoft.Graph.PowerShell.Models.MicrosoftGraphUnifiedRoleEligibilitySchedule" }).Count
-                Write-Host "Found $pimEligibleCount PIM eligible SharePoint assignments" -ForegroundColor Gray
+                Write-Host "Found $pimEligibleCount PIM eligible SharePoint administrative assignments" -ForegroundColor Gray
             }
             catch {
                 Write-Verbose "Could not retrieve PIM eligible assignments: $($_.Exception.Message)"
@@ -136,7 +140,7 @@ function Get-SharePointRoleAudit {
                     }
                 }
                 $pimActiveCount = ($allAssignments | Where-Object { $_.PSObject.TypeNames -contains "Microsoft.Graph.PowerShell.Models.MicrosoftGraphUnifiedRoleAssignmentSchedule" }).Count
-                Write-Host "Found $pimActiveCount PIM active SharePoint assignments" -ForegroundColor Gray
+                Write-Host "Found $pimActiveCount PIM active SharePoint administrative assignments" -ForegroundColor Gray
             }
             catch {
                 Write-Verbose "Could not retrieve PIM active assignments: $($_.Exception.Message)"
@@ -208,6 +212,9 @@ function Get-SharePointRoleAudit {
                         catch { }
                     }
                     
+                    # Determine role scope for enhanced deduplication
+                    $roleScope = if ($role.DisplayName -in $overarchingRoles) { "Overarching" } else { "Service-Specific" }
+                    
                     $results += [PSCustomObject]@{
                         Service = "SharePoint Online"
                         UserPrincipalName = $principalInfo.UserPrincipalName
@@ -215,6 +222,7 @@ function Get-SharePointRoleAudit {
                         UserId = $principalInfo.UserId
                         RoleName = $role.DisplayName
                         RoleDefinitionId = $assignment.RoleDefinitionId
+                        RoleScope = $roleScope  # New property for enhanced deduplication
                         AssignmentType = $assignmentType
                         AssignedDateTime = $assignment.CreatedDateTime
                         UserEnabled = $principalInfo.UserEnabled
@@ -235,21 +243,39 @@ function Get-SharePointRoleAudit {
             }
         }
         catch {
-            Write-Warning "Error retrieving SharePoint Azure AD roles: $($_.Exception.Message)"
+            Write-Warning "Error retrieving SharePoint Azure AD administrative roles: $($_.Exception.Message)"
         }
         
-        # 3. Get SharePoint App Catalog administrators (if app catalog exists)
-        Write-Host "Checking SharePoint App Catalog administrators..." -ForegroundColor Cyan
+        # === SHAREPOINT TENANT-LEVEL ADMINISTRATIVE ROLES ONLY ===
+        Write-Host "Verifying SharePoint tenant administrative access..." -ForegroundColor Cyan
+        try {
+            # Verify admin center connection and access
+            $adminCenterUrl = $TenantUrl
+            Connect-PnPOnline -Url $adminCenterUrl -ClientId $script:AppConfig.ClientId -Thumbprint $script:AppConfig.CertificateThumbprint -Tenant $script:AppConfig.TenantId
+            
+            # Get tenant properties to verify administrative access
+            $tenantProperties = Get-PnPTenant -ErrorAction SilentlyContinue
+            if ($tenantProperties) {
+                Write-Host "✓ Successfully accessed tenant administrative properties" -ForegroundColor Green
+            }
+            
+        }
+        catch {
+            Write-Verbose "Could not access tenant properties: $($_.Exception.Message)"
+        }
+        
+        # Get SharePoint App Catalog administrators (TENANT-LEVEL ONLY)
+        Write-Host "Checking SharePoint Tenant App Catalog administrators..." -ForegroundColor Cyan
         try {
             # Check if tenant app catalog exists
             $appCatalog = Get-PnPTenantAppCatalogUrl -ErrorAction SilentlyContinue
             if ($appCatalog) {
-                Write-Host "App Catalog found: $appCatalog" -ForegroundColor Gray
+                Write-Host "Tenant App Catalog found: $appCatalog" -ForegroundColor Gray
                 
                 # Connect to app catalog
                 Connect-PnPOnline -Url $appCatalog -ClientId $script:AppConfig.ClientId -Thumbprint $script:AppConfig.CertificateThumbprint -Tenant $script:AppConfig.TenantId
                 
-                # Get app catalog administrators
+                # Get app catalog administrators (TENANT-LEVEL ADMINISTRATIVE ROLE)
                 $appCatalogAdmins = Get-PnPSiteCollectionAdmin -ErrorAction SilentlyContinue
                 foreach ($admin in $appCatalogAdmins) {
                     $cleanLoginName = $admin.LoginName -replace "i:0#\.f\|membership\|", "" -replace "i:0#\.w\|", ""
@@ -259,13 +285,14 @@ function Get-SharePointRoleAudit {
                         UserPrincipalName = $cleanLoginName
                         DisplayName = $admin.Title
                         UserId = $null
-                        RoleName = "App Catalog Administrator"
+                        RoleName = "Tenant App Catalog Administrator"
                         RoleDefinitionId = $null
+                        RoleScope = "Service-Specific"  # New property
                         AssignmentType = "Active"
                         AssignedDateTime = $null
                         UserEnabled = $null
                         LastSignIn = $null
-                        Scope = $appCatalog
+                        Scope = "Tenant App Catalog"
                         AssignmentId = $null
                         AuthenticationType = "Certificate"
                         PrincipalType = "User"
@@ -274,108 +301,32 @@ function Get-SharePointRoleAudit {
                         Template = "APPCATALOG#0"
                     }
                 }
-                Write-Host "Found $($appCatalogAdmins.Count) App Catalog administrators" -ForegroundColor Gray
+                Write-Host "Found $($appCatalogAdmins.Count) Tenant App Catalog administrators" -ForegroundColor Gray
             }
             else {
                 Write-Host "No tenant app catalog found" -ForegroundColor Gray
             }
         }
         catch {
-            Write-Verbose "Could not access App Catalog: $($_.Exception.Message)"
-        }
-        
-        # 4. Get Search Service Application administrators
-        Write-Host "Checking Search Center administrators..." -ForegroundColor Cyan
-        try {
-            # Look for search center sites
-            $searchSites = Get-PnPTenantSite -Template "SRCHCEN#0" -ErrorAction SilentlyContinue
-            foreach ($searchSite in $searchSites) {
-                try {
-                    Connect-PnPOnline -Url $searchSite.Url -ClientId $script:AppConfig.ClientId -Thumbprint $script:AppConfig.CertificateThumbprint -Tenant $script:AppConfig.TenantId
-                    
-                    $searchAdmins = Get-PnPSiteCollectionAdmin -ErrorAction SilentlyContinue
-                    foreach ($admin in $searchAdmins) {
-                        $cleanLoginName = $admin.LoginName -replace "i:0#\.f\|membership\|", "" -replace "i:0#\.w\|", ""
-                        
-                        $results += [PSCustomObject]@{
-                            Service = "SharePoint Online"
-                            UserPrincipalName = $cleanLoginName
-                            DisplayName = $admin.Title
-                            UserId = $null
-                            RoleName = "Search Center Administrator"
-                            RoleDefinitionId = $null
-                            AssignmentType = "Active"
-                            AssignedDateTime = $null
-                            UserEnabled = $null
-                            LastSignIn = $null
-                            Scope = $searchSite.Url
-                            AssignmentId = $null
-                            AuthenticationType = "Certificate"
-                            PrincipalType = "User"
-                            RoleType = "SharePointSpecific"
-                            SiteTitle = $searchSite.Title
-                            Template = $searchSite.Template
-                        }
-                    }
-                }
-                catch {
-                    Write-Verbose "Could not access search site $($searchSite.Url): $($_.Exception.Message)"
-                }
-            }
-            Write-Host "Processed $($searchSites.Count) Search Center sites" -ForegroundColor Gray
-        }
-        catch {
-            Write-Verbose "Could not retrieve search sites: $($_.Exception.Message)"
-        }
-        
-        # 5. Check Term Store access (if accessible)
-        Write-Host "Checking Term Store access..." -ForegroundColor Cyan
-        try {
-            # Reconnect to admin center
-            Connect-PnPOnline -Url $TenantUrl -ClientId $script:AppConfig.ClientId -Thumbprint $script:AppConfig.CertificateThumbprint -Tenant $script:AppConfig.TenantId
-            
-            # Try to get term store information
-            $termStore = Get-PnPTermStore -ErrorAction SilentlyContinue
-            if ($termStore) {
-                Write-Host "✓ Term Store access verified" -ForegroundColor Gray
-                
-                # Add term store access verification to results
-                $results += [PSCustomObject]@{
-                    Service = "SharePoint Online"
-                    UserPrincipalName = "System Configuration"
-                    DisplayName = "Term Store Configuration"
-                    UserId = $null
-                    RoleName = "Term Store Access Verified"
-                    RoleDefinitionId = $null
-                    AssignmentType = "System"
-                    AssignedDateTime = (Get-Date)
-                    UserEnabled = $null
-                    LastSignIn = $null
-                    Scope = "Term Store"
-                    AssignmentId = $null
-                    AuthenticationType = "Certificate"
-                    PrincipalType = "System"
-                    RoleType = "SharePointSpecific"
-                }
-            }
-            else {
-                Write-Host "No Term Store access available" -ForegroundColor Gray
-            }
-        }
-        catch {
-            Write-Verbose "Could not access Term Store: $($_.Exception.Message)"
+            Write-Verbose "Could not access Tenant App Catalog: $($_.Exception.Message)"
         }
         
         Write-Host "✓ SharePoint administrative role audit completed. Found $($results.Count) administrative role assignments" -ForegroundColor Green
+        
+        # Provide feedback about role filtering
+        if (-not $IncludeAzureADRoles) {
+            Write-Host "  (Excluding overarching Azure AD roles - use -IncludeAzureADRoles to include)" -ForegroundColor Yellow
+        }
         
         # Show breakdown
         if ($results.Count -gt 0) {
             $roleSummary = $results | Group-Object RoleName
             $typeSummary = $results | Group-Object PrincipalType
             $assignmentTypeSummary = $results | Group-Object AssignmentType
+            $scopeSummary = $results | Group-Object RoleScope
             
             Write-Host ""
-            Write-Host "Role breakdown:" -ForegroundColor Cyan
+            Write-Host "Administrative role breakdown:" -ForegroundColor Cyan
             foreach ($role in $roleSummary) {
                 Write-Host "  $($role.Name): $($role.Count)" -ForegroundColor White
             }
@@ -389,11 +340,24 @@ function Get-SharePointRoleAudit {
             foreach ($type in $assignmentTypeSummary) {
                 Write-Host "  $($type.Name): $($type.Count)" -ForegroundColor White
             }
+            
+            Write-Host "Role scope:" -ForegroundColor Cyan
+            foreach ($scope in $scopeSummary) {
+                Write-Host "  $($scope.Name): $($scope.Count)" -ForegroundColor White
+            }
+            
+            Write-Host ""
+            Write-Host "=== SCOPE CLARIFICATION ===" -ForegroundColor Green
+            Write-Host "✓ Focused on tenant-level administrative roles only" -ForegroundColor Green
+            Write-Host "✓ Excluded: Site-level permissions and individual site administrators" -ForegroundColor Green
+            Write-Host "✓ Excluded: Search Center administrators for individual sites" -ForegroundColor Green
+            Write-Host "✓ Excluded: Term Store access verification" -ForegroundColor Green
+            Write-Host "✓ Included: Tenant App Catalog administrators (tenant-level administrative role)" -ForegroundColor Green
         }
         
     }
     catch {
-        Write-Error "Error in SharePoint role audit: $($_.Exception.Message)"
+        Write-Error "Error in SharePoint administrative role audit: $($_.Exception.Message)"
         
         # Provide specific troubleshooting guidance
         if ($_.Exception.Message -like "*certificate*") {
@@ -409,7 +373,6 @@ function Get-SharePointRoleAudit {
             Write-Host "Required Application Permissions (Grant Admin Consent):" -ForegroundColor Red
             Write-Host "• Sites.FullControl.All" -ForegroundColor White
             Write-Host "• Sites.Read.All" -ForegroundColor White
-            Write-Host "• TermStore.ReadWrite.All" -ForegroundColor White
             Write-Host "• Directory.Read.All (for Azure AD roles)" -ForegroundColor White
             Write-Host "• RoleManagement.Read.All (for PIM)" -ForegroundColor White
             Write-Host "Run: Get-M365AuditRequiredPermissions for complete list" -ForegroundColor White
