@@ -2481,1105 +2481,6 @@ function Get-M365ComplianceGaps {
     return $gaps
 }
 
-function Export-M365ServiceAuditHtmlReport {
-    param(
-        [Parameter(Mandatory = $true)]
-        [array]$AuditResults,
-        
-        [string]$OutputPath,
-        [string]$OrganizationName = "Organization",
-        [switch]$IncludeCharts,
-        [switch]$IncludePIMAnalysis,
-        [switch]$IncludeServiceSpecificAnalysis,
-        [switch]$Quite
-    )
-    
-    if ($AuditResults.Count -eq 0) {
-        Write-Warning "No audit results provided"
-        return
-    }
-    
-    # Auto-detect service(s) and set appropriate defaults
-    $services = $AuditResults | Group-Object Service | Sort-Object Count -Descending
-    $primaryService = $services[0].Name
-    $isMultiService = $services.Count -gt 1
-    
-    # Generate appropriate output path if not specified
-    if (-not $OutputPath) {
-        $serviceSlug = if ($isMultiService) { "MultiService" } else { $primaryService -replace "[^a-zA-Z0-9]", "" }
-        $OutputPath = ".\M365_${serviceSlug}_Audit_Report_$(Get-Date -Format 'yyyyMMdd_HHmmss').html"
-    }
-    
-    # Service-specific customizations
-    $reportTitle = if ($isMultiService) {
-        "Microsoft 365 Multi-Service Role Audit"
-    } else {
-        "$primaryService Role Audit Report"
-    }
-    
-    $reportIcon = switch -Regex ($primaryService) {
-        "Azure AD|Entra ID" { "🔷" }
-        "SharePoint" { "📊" }
-        "Exchange" { "📧" }
-        "Teams" { "👥" }
-        "Intune" { "📱" }
-        "Purview|Compliance" { "🛡️" }
-        "Defender" { "🔐" }
-        "Power Platform" { "⚡" }
-        default { "🔒" }
-    }
-    
-    # Calculate service-specific statistics
-    $totalAssignments = $AuditResults.Count
-    $uniqueUsers = ($AuditResults | Where-Object { $_.UserPrincipalName -and $_.UserPrincipalName -ne "Unknown" } | 
-                   Select-Object -Unique UserPrincipalName).Count
-    
-    # Service-specific analysis
-    $serviceAnalysis = @{}
-    
-    switch -Regex ($primaryService) {
-        "Azure AD|Entra ID" {
-            $globalAdmins = $AuditResults | Where-Object { $_.RoleName -eq "Global Administrator" }
-            $pimEligible = $AuditResults | Where-Object { $_.AssignmentType -like "*Eligible*" }
-            $serviceAnalysis = @{
-                GlobalAdmins = $globalAdmins.Count
-                PIMEligible = $pimEligible.Count
-                HasPIM = $pimEligible.Count -gt 0
-                KeyMetric = "Global Administrator Count"
-                KeyMetricValue = $globalAdmins.Count
-                KeyMetricStatus = if ($globalAdmins.Count -le 5) { "✓ Good" } else { "⚠ Review" }
-            }
-        }
-        "SharePoint" {
-            $siteAdmins = $AuditResults | Where-Object { $_.RoleName -eq "Site Collection Administrator" }
-            $sites = $AuditResults | Where-Object { $_.SiteTitle } | Select-Object -Unique SiteTitle
-            $totalStorage = ($AuditResults | Where-Object { $_.StorageUsedMB } | Measure-Object StorageUsedMB -Sum).Sum
-            $serviceAnalysis = @{
-                SiteAdmins = $siteAdmins.Count
-                UniqueSites = $sites.Count
-                TotalStorageMB = $totalStorage
-                KeyMetric = "Sites Audited"
-                KeyMetricValue = $sites.Count
-                KeyMetricStatus = "ℹ Info"
-            }
-        }
-        "Exchange" {
-            $roleGroups = $AuditResults | Where-Object { $_.AssignmentType -eq "Role Group Member" }
-            $orgAdmins = $AuditResults | Where-Object { $_.RoleName -eq "Organization Management" }
-            $serviceAnalysis = @{
-                RoleGroupMembers = $roleGroups.Count
-                OrgAdmins = $orgAdmins.Count
-                KeyMetric = "Role Group Assignments"
-                KeyMetricValue = $roleGroups.Count
-                KeyMetricStatus = "ℹ Info"
-            }
-        }
-        "Intune" {
-            $serviceAdmins = $AuditResults | Where-Object { $_.RoleName -eq "Intune Service Administrator" }
-            $rbacAssignments = $AuditResults | Where-Object { $_.RoleType -eq "IntuneRBAC" }
-            $azureADAssignments = $AuditResults | Where-Object { $_.RoleType -eq "AzureAD" }
-            $serviceAnalysis = @{
-                ServiceAdmins = $serviceAdmins.Count
-                RBACAssignments = $rbacAssignments.Count
-                AzureADAssignments = $azureADAssignments.Count
-                KeyMetric = "RBAC vs Azure AD Roles"
-                KeyMetricValue = "$($rbacAssignments.Count) vs $($azureADAssignments.Count)"
-                KeyMetricStatus = if ($rbacAssignments.Count -ge $azureADAssignments.Count) { "✓ Good" } else { "⚠ Consider RBAC" }
-            }
-        }
-        "Teams" {
-            $teamsAdmins = $AuditResults | Where-Object { $_.RoleName -like "*Teams*Administrator*" }
-            $principalTypes = $AuditResults | Group-Object PrincipalType
-            $serviceAnalysis = @{
-                TeamsAdmins = $teamsAdmins.Count
-                PrincipalTypes = $principalTypes.Count
-                KeyMetric = "Teams Administrators"
-                KeyMetricValue = $teamsAdmins.Count
-                KeyMetricStatus = "ℹ Info"
-            }
-        }
-        "Purview|Compliance" {
-            $roleGroups = $AuditResults | Where-Object { $_.AssignmentType -eq "Role Group Member" }
-            $policyOwners = $AuditResults | Where-Object { $_.AssignmentType -eq "Policy Owner" }
-            $serviceAnalysis = @{
-                RoleGroups = $roleGroups.Count
-                PolicyOwners = $policyOwners.Count
-                KeyMetric = "Compliance Role Groups"
-                KeyMetricValue = $roleGroups.Count
-                KeyMetricStatus = "ℹ Info"
-            }
-        }
-        "Defender" {
-            $securityAdmins = $AuditResults | Where-Object { $_.RoleName -like "*Security*Administrator*" }
-            $securityReaders = $AuditResults | Where-Object { $_.RoleName -like "*Security*Reader*" }
-            $serviceAnalysis = @{
-                SecurityAdmins = $securityAdmins.Count
-                SecurityReaders = $securityReaders.Count
-                KeyMetric = "Security Administrators"
-                KeyMetricValue = $securityAdmins.Count
-                KeyMetricStatus = if ($securityAdmins.Count -le 3) { "✓ Good" } else { "⚠ Review" }
-            }
-        }
-        "Power Platform" {
-            $powerPlatformAdmins = $AuditResults | Where-Object { $_.RoleName -eq "Power Platform Administrator" }
-            $principalTypes = $AuditResults | Group-Object PrincipalType
-            $servicePrincipals = $AuditResults | Where-Object { $_.PrincipalType -eq "ServicePrincipal" }
-            $serviceAnalysis = @{
-                PowerPlatformAdmins = $powerPlatformAdmins.Count
-                ServicePrincipals = $servicePrincipals.Count
-                KeyMetric = "Power Platform Admins"
-                KeyMetricValue = $powerPlatformAdmins.Count
-                KeyMetricStatus = if ($powerPlatformAdmins.Count -le 5) { "✓ Good" } else { "⚠ Review" }
-            }
-        }
-    }
-    
-    # Build HTML with enhanced styling and functionality
-    $html = @"
-<!DOCTYPE html>
-<html lang="en">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>$reportTitle - $OrganizationName</title>
-    <style>
-        :root {
-            --primary-color: #0078d4;
-            --secondary-color: #106ebe;
-            --success-color: #107c10;
-            --warning-color: #ff8c00;
-            --danger-color: #d13438;
-            --info-color: #00bcf2;
-            --dark-color: #323130;
-            --light-color: #f3f2f1;
-        }
-        
-        * { box-sizing: border-box; }
-        
-        body { 
-            font-family: 'Segoe UI', -apple-system, BlinkMacSystemFont, Roboto, sans-serif; 
-            margin: 0; 
-            padding: 20px; 
-            background: linear-gradient(135deg, #f5f7fa 0%, #c3cfe2 100%);
-            line-height: 1.6;
-        }
-        
-        .container { 
-            max-width: 1400px; 
-            margin: 0 auto; 
-            background: white; 
-            padding: 40px; 
-            border-radius: 12px; 
-            box-shadow: 0 8px 32px rgba(0,0,0,0.1);
-            backdrop-filter: blur(10px);
-        }
-        
-        .header { 
-            text-align: center; 
-            margin-bottom: 40px; 
-            padding-bottom: 30px; 
-            border-bottom: 3px solid var(--primary-color);
-            background: linear-gradient(135deg, var(--primary-color), var(--secondary-color));
-            color: white;
-            margin: -40px -40px 40px -40px;
-            padding: 40px;
-            border-radius: 12px 12px 0 0;
-        }
-        
-        .header h1 { 
-            margin: 0; 
-            font-size: 2.8em; 
-            font-weight: 300;
-            text-shadow: 0 2px 4px rgba(0,0,0,0.3);
-        }
-        
-        .header p { 
-            margin: 15px 0 0 0; 
-            font-size: 1.2em; 
-            opacity: 0.9;
-        }
-        
-        .summary-grid { 
-            display: grid; 
-            grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); 
-            gap: 25px; 
-            margin-bottom: 40px; 
-        }
-        
-        .summary-card { 
-            background: linear-gradient(135deg, var(--primary-color), var(--secondary-color)); 
-            color: white; 
-            padding: 30px; 
-            border-radius: 12px; 
-            text-align: center;
-            position: relative;
-            overflow: hidden;
-            transition: transform 0.3s ease;
-        }
-        
-        .summary-card:hover {
-            transform: translateY(-5px);
-        }
-        
-        .summary-card::before {
-            content: '';
-            position: absolute;
-            top: 0;
-            left: 0;
-            right: 0;
-            bottom: 0;
-            background: linear-gradient(45deg, transparent 30%, rgba(255,255,255,0.1) 50%, transparent 70%);
-            transform: translateX(-100%);
-            transition: transform 0.6s;
-        }
-        
-        .summary-card:hover::before {
-            transform: translateX(100%);
-        }
-        
-        .summary-card h3 { 
-            margin: 0 0 15px 0; 
-            font-size: 1.3em; 
-            font-weight: 400;
-        }
-        
-        .summary-card .number { 
-            font-size: 3em; 
-            font-weight: bold; 
-            margin: 15px 0;
-            text-shadow: 0 2px 4px rgba(0,0,0,0.3);
-        }
-        
-        .summary-card .subtitle {
-            font-size: 0.9em;
-            opacity: 0.8;
-        }
-        
-        .section { 
-            margin-bottom: 50px; 
-            position: relative;
-        }
-        
-        .section h2 { 
-            color: var(--primary-color); 
-            border-bottom: 3px solid var(--primary-color); 
-            padding-bottom: 15px; 
-            font-size: 2em;
-            font-weight: 300;
-            margin-bottom: 25px;
-            position: relative;
-        }
-        
-        .section h2::after {
-            content: '';
-            position: absolute;
-            bottom: -3px;
-            left: 0;
-            width: 60px;
-            height: 3px;
-            background: var(--warning-color);
-        }
-        
-        .security-alerts { 
-            background: linear-gradient(135deg, #fff3cd, #ffeaa7); 
-            border: 1px solid var(--warning-color); 
-            border-left: 5px solid var(--warning-color);
-            border-radius: 8px; 
-            padding: 25px; 
-            margin: 25px 0; 
-        }
-        
-        .security-alerts h3 {
-            margin-top: 0;
-            color: #856404;
-            font-size: 1.2em;
-        }
-        
-        .alert-item { 
-            margin: 15px 0; 
-            padding: 10px;
-            border-radius: 5px;
-            background: rgba(255,255,255,0.7);
-        }
-        
-        .alert-warning { 
-            color: #856404; 
-            border-left: 4px solid var(--warning-color);
-            padding-left: 15px;
-        }
-        
-        .alert-success {
-            color: var(--success-color);
-            border-left: 4px solid var(--success-color);
-            padding-left: 15px;
-            background: rgba(16, 124, 16, 0.1);
-        }
-        
-        table { 
-            width: 100%; 
-            border-collapse: collapse; 
-            margin: 25px 0; 
-            background: white;
-            border-radius: 8px;
-            overflow: hidden;
-            box-shadow: 0 4px 16px rgba(0,0,0,0.1);
-        }
-        
-        th, td { 
-            padding: 15px 12px; 
-            text-align: left; 
-            border-bottom: 1px solid #e1dfdd; 
-        }
-        
-        th { 
-            background: linear-gradient(135deg, var(--primary-color), var(--secondary-color)); 
-            color: white; 
-            font-weight: 600;
-            text-transform: uppercase;
-            font-size: 0.9em;
-            letter-spacing: 0.5px;
-        }
-        
-        tr:hover { 
-            background-color: #f9f9f9; 
-            transition: background-color 0.2s ease;
-        }
-        
-        tr:nth-child(even) {
-            background-color: #fafafa;
-        }
-        
-        .service-badge {
-            padding: 4px 12px;
-            border-radius: 20px;
-            color: white;
-            font-size: 0.85em;
-            font-weight: 600;
-            text-align: center;
-            display: inline-block;
-            min-width: 120px;
-        }
-        
-        .service-azure { background: linear-gradient(135deg, #0078d4, #106ebe); }
-        .service-sharepoint { background: linear-gradient(135deg, #0b6623, #0e7629); }
-        .service-exchange { background: linear-gradient(135deg, #d13438, #b02a37); }
-        .service-teams { background: linear-gradient(135deg, #464775, #5b5d8a); }
-        .service-purview { background: linear-gradient(135deg, #8b4789, #9e5a9c); }
-        .service-intune { background: linear-gradient(135deg, #00bcf2, #0078d4); }
-        .service-defender { background: linear-gradient(135deg, #ff8c00, #e67e22); }
-        .service-powerplatform { background: linear-gradient(135deg, #742774, #8b4789); }
-        
-        .tag {
-            display: inline-block;
-            background: var(--primary-color);
-            color: white;
-            padding: 3px 8px;
-            border-radius: 12px;
-            font-size: 0.8em;
-            margin: 2px;
-            font-weight: 500;
-        }
-        
-        .tag.pim { background: var(--success-color); }
-        .tag.permanent { background: var(--warning-color); }
-        .tag.disabled { background: var(--danger-color); }
-        
-        .stat-number {
-            font-size: 1.5em;
-            font-weight: bold;
-            color: var(--primary-color);
-        }
-        
-        .user-details {
-            display: none;
-            margin-top: 15px;
-            padding: 15px;
-            background: #f9f9f9;
-            border-radius: 6px;
-            border-left: 4px solid var(--primary-color);
-            max-height: 250px;
-            overflow-y: auto;
-        }
-        
-        .user-details.show {
-            display: block;
-            animation: slideDown 0.3s ease-out;
-        }
-        
-        @keyframes slideDown {
-            from { opacity: 0; max-height: 0; }
-            to { opacity: 1; max-height: 250px; }
-        }
-        
-        .role-badge-container {
-            max-width: 300px;
-            line-height: 1.4;
-        }
-        
-        .action-button {
-            background: var(--primary-color);
-            color: white;
-            border: none;
-            padding: 6px 12px;
-            border-radius: 4px;
-            cursor: pointer;
-            font-size: 0.85em;
-            transition: all 0.2s ease;
-        }
-        
-        .action-button:hover {
-            background: var(--secondary-color);
-            transform: translateY(-1px);
-        }
-        
-        .action-button.active {
-            background: var(--warning-color);
-        }
-        
-        .footer { 
-            margin-top: 60px; 
-            padding-top: 30px; 
-            border-top: 2px solid #ddd; 
-            text-align: center; 
-            color: #666; 
-            background: #f9f9f9;
-            margin-left: -40px;
-            margin-right: -40px;
-            padding-left: 40px;
-            padding-right: 40px;
-            border-radius: 0 0 12px 12px;
-        }
-        
-        @media (max-width: 768px) {
-            .container { padding: 20px; }
-            .summary-grid { grid-template-columns: 1fr; }
-            .header h1 { font-size: 2em; }
-            table { font-size: 0.9em; }
-            th, td { padding: 10px 8px; }
-            .role-badge-container { max-width: 200px; }
-        }
-    </style>
-    <script>
-        function toggleUserDetails(userId) {
-            const details = document.getElementById('userDetails_' + userId);
-            const button = event.target;
-            
-            if (details.classList.contains('show')) {
-                details.classList.remove('show');
-                setTimeout(() => { details.style.display = 'none'; }, 300);
-                button.textContent = 'View All Roles';
-                button.classList.remove('active');
-            } else {
-                details.style.display = 'block';
-                setTimeout(() => { details.classList.add('show'); }, 10);
-                button.textContent = 'Hide Roles';
-                button.classList.add('active');
-            }
-        }
-        
-        function scrollToTop() {
-            window.scrollTo({ top: 0, behavior: 'smooth' });
-        }
-        
-        document.addEventListener('DOMContentLoaded', function() {
-            // Add scroll functionality if needed
-            window.addEventListener('scroll', function() {
-                // Could add scroll-based interactions here
-            });
-        });
-    </script>
-</head>
-<body>
-    <div class="container">
-        <div class="header">
-            <h1>$reportIcon $reportTitle</h1>
-            <p>$OrganizationName | Generated on $(Get-Date -Format 'MMMM dd, yyyy at HH:mm')</p>
-        </div>
-        
-        <!-- Service-Specific Dashboard -->
-        <div class="summary-grid">
-            <div class="summary-card">
-                <h3>Total Assignments</h3>
-                <div class="number">$totalAssignments</div>
-                <div class="subtitle">Role assignments found</div>
-            </div>
-            <div class="summary-card">
-                <h3>Unique Users</h3>
-                <div class="number">$uniqueUsers</div>
-                <div class="subtitle">With role assignments</div>
-            </div>
-            <div class="summary-card">
-                <h3>$($serviceAnalysis.KeyMetric)</h3>
-                <div class="number">$($serviceAnalysis.KeyMetricValue)</div>
-                <div class="subtitle">$($serviceAnalysis.KeyMetricStatus)</div>
-            </div>
-"@
-    
-    # Add service-specific cards
-    if ($primaryService -match "Azure AD|Entra ID" -and $serviceAnalysis.HasPIM) {
-        $html += @"
-            <div class="summary-card">
-                <h3>PIM Eligible</h3>
-                <div class="number">$($serviceAnalysis.PIMEligible)</div>
-                <div class="subtitle">Require activation</div>
-            </div>
-"@
-    } elseif ($primaryService -eq "SharePoint Online" -and $serviceAnalysis.TotalStorageMB -gt 0) {
-        $storageGB = [math]::Round($serviceAnalysis.TotalStorageMB / 1024, 1)
-        $html += @"
-            <div class="summary-card">
-                <h3>Storage Used</h3>
-                <div class="number">$storageGB</div>
-                <div class="subtitle">GB across sites</div>
-            </div>
-"@
-    } elseif ($primaryService -eq "Microsoft Intune") {
-        $html += @"
-            <div class="summary-card">
-                <h3>RBAC Usage</h3>
-                <div class="number">$($serviceAnalysis.RBACAssignments)</div>
-                <div class="subtitle">Intune RBAC roles</div>
-            </div>
-"@
-    }
-    
-    $html += @"
-        </div>
-        
-        <!-- Service-Specific Analysis Section -->
-        <div class="section">
-            <h2>📊 $primaryService Analysis</h2>
-"@
-    
-    # Add service-specific insights
-    switch -Regex ($primaryService) {
-        "Azure AD|Entra ID" {
-            if ($serviceAnalysis.GlobalAdmins -gt 5) {
-                $html += @"
-            <div class="security-alerts">
-                <h3>Security Recommendations</h3>
-                <div class="alert-item alert-warning">⚠️ Consider reducing Global Administrator count from $($serviceAnalysis.GlobalAdmins) to 5 or fewer</div>
-"@
-                if ($serviceAnalysis.PIMEligible -eq 0) {
-                    $html += @"
-                <div class="alert-item alert-warning">⚠️ Consider implementing PIM for privileged role assignments</div>
-"@
-                }
-                $html += "</div>"
-            } else {
-                $html += @"
-            <div class="security-alerts" style="background: linear-gradient(135deg, #e8f5e8, #c8e6c9); border-color: var(--success-color);">
-                <h3 style="color: var(--success-color);">Security Status</h3>
-                <div class="alert-item alert-success">✓ Global Administrator count is within recommended limits</div>
-"@
-                if ($serviceAnalysis.PIMEligible -gt 0) {
-                    $html += @"
-                <div class="alert-item alert-success">✓ PIM eligible assignments detected</div>
-"@
-                }
-                $html += "</div>"
-            }
-        }
-        "Microsoft Intune" {
-            $html += @"
-            <div class="security-alerts">
-                <h3>Intune Configuration Analysis</h3>
-                <div class="alert-item">📊 Service Administrators: $($serviceAnalysis.ServiceAdmins)</div>
-                <div class="alert-item">🔧 RBAC Assignments: $($serviceAnalysis.RBACAssignments)</div>
-                <div class="alert-item">🔷 Azure AD Assignments: $($serviceAnalysis.AzureADAssignments)</div>
-"@
-            if ($serviceAnalysis.RBACAssignments -lt $serviceAnalysis.AzureADAssignments) {
-                $html += @"
-                <div class="alert-item alert-warning">⚠️ Consider using more Intune RBAC roles for granular permissions</div>
-"@
-            } else {
-                $html += @"
-                <div class="alert-item alert-success">✓ Good use of Intune RBAC roles</div>
-"@
-            }
-            $html += "</div>"
-        }
-        # Add other service-specific analysis blocks as needed...
-    }
-    
-    $html += @"
-        </div>
-        
-        <!-- Role Distribution Table -->
-        <div class="section">
-            <h2>👑 Role Distribution</h2>
-            <table>
-                <tr><th>Role Name</th><th>Users Assigned</th><th>Assignment Type</th><th>Details</th></tr>
-"@
-    
-    # Group by role and show distribution
-    $roleDistribution = $AuditResults | Group-Object RoleName | Sort-Object Count -Descending
-    foreach ($role in $roleDistribution) {
-        $assignmentTypes = ($role.Group | Group-Object AssignmentType | ForEach-Object { "$($_.Name): $($_.Count)" }) -join "; "
-        $roleDetails = switch -Regex ($role.Name) {
-            "Global Administrator" { "Highest privilege - monitor closely" }
-            ".*Administrator.*" { "Administrative role" }
-            ".*Reader.*" { "Read-only access" }
-            default { "Standard role" }
-        }
-        
-        $html += @"
-<tr>
-    <td><strong>$($role.Name)</strong></td>
-    <td>$($role.Count)</td>
-    <td><small>$assignmentTypes</small></td>
-    <td><small>$roleDetails</small></td>
-</tr>
-"@
-    }
-    
-    $html += @"
-            </table>
-        </div>
-        
-        <!-- Enhanced User Analysis -->
-        <div class="section">
-            <h2>👥 User Analysis</h2>
-            <table>
-                <tr><th>User</th><th>Role Count</th><th>Primary Roles</th><th>Status</th><th>Last Sign-In</th><th>Actions</th></tr>
-"@
-    
-    # Enhanced User Analysis with expandable details
-    $userAnalysis = $AuditResults | Where-Object { $_.UserPrincipalName -and $_.UserPrincipalName -ne "Unknown" } |
-                   Group-Object UserPrincipalName | Sort-Object Count -Descending | Select-Object -First 20
-    
-    foreach ($user in $userAnalysis) {
-        $userInfo = $user.Group[0]
-        
-        # Get top 3 most important roles for display
-        $allRoles = $user.Group | Select-Object -ExpandProperty RoleName | Sort-Object
-        $topRoles = @()
-        
-        # Prioritize certain critical roles for display
-        $criticalRoles = $allRoles | Where-Object { 
-            $_ -match "Global Administrator|Security Administrator|Exchange Administrator|SharePoint Administrator|Intune Service Administrator" 
-        }
-        
-        if ($criticalRoles.Count -gt 0) {
-            $topRoles += $criticalRoles | Select-Object -First 2
-        }
-        
-        # Add other roles up to 3 total
-        $remainingSlots = 3 - $topRoles.Count
-        if ($remainingSlots -gt 0) {
-            $otherRoles = $allRoles | Where-Object { $_ -notin $topRoles } | Select-Object -First $remainingSlots
-            $topRoles += $otherRoles
-        }
-        
-        # Format role display
-        $roleDisplay = ""
-        foreach ($role in $topRoles) {
-            $roleClass = switch -Regex ($role) {
-                "Global Administrator" { "tag disabled" }
-                ".*Security.*Administrator.*" { "tag permanent" }
-                ".*Administrator.*" { "tag" }
-                default { "tag pim" }
-            }
-            $roleDisplay += "<span class='$roleClass'>$role</span> "
-        }
-        
-        # Add "more roles" indicator if user has additional roles
-        $additionalRoles = $allRoles.Count - $topRoles.Count
-        if ($additionalRoles -gt 0) {
-            $roleDisplay += "<br><small style='color: #666; font-style: italic;'>+$additionalRoles more role$(if($additionalRoles -gt 1){'s'})</small>"
-        }
-        
-        $statusColor = if ($userInfo.UserEnabled -eq $false) { "style='color: red; font-weight: bold;'" } else { "" }
-        $status = if ($userInfo.UserEnabled -eq $false) { "DISABLED" } else { "Active" }
-        $lastSignIn = if ($userInfo.LastSignIn) { 
-            ([DateTime]$userInfo.LastSignIn).ToString("yyyy-MM-dd") 
-        } else { 
-            "Unknown" 
-        }
-        
-        # Create expandable details
-        $userId = $user.Name -replace '[^a-zA-Z0-9]', ''
-        
-        # Build detailed role list grouped by service
-        $rolesByService = $user.Group | Group-Object Service | Sort-Object Name
-        $allRolesList = ""
-        foreach ($serviceGroup in $rolesByService) {
-            $serviceClass = switch ($serviceGroup.Name) {
-                "Azure AD/Entra ID" { "service-azure" }
-                "SharePoint Online" { "service-sharepoint" }
-                "Exchange Online" { "service-exchange" }
-                "Microsoft Teams" { "service-teams" }
-                "Microsoft Purview" { "service-purview" }
-                "Microsoft Intune" { "service-intune" }
-                "Microsoft Defender" { "service-defender" }
-                "Power Platform" { "service-powerplatform" }
-                default { "service-azure" }
-            }
-            
-            $allRolesList += "<div style='margin-bottom: 12px;'>"
-            $allRolesList += "<span class='service-badge $serviceClass' style='font-size: 0.75em; margin-bottom: 5px; display: inline-block;'>$($serviceGroup.Name)</span><br>"
-            
-            $serviceRoles = $serviceGroup.Group | Sort-Object RoleName
-            foreach ($roleAssignment in $serviceRoles) {
-                $assignmentBadge = if ($roleAssignment.AssignmentType -like "*Eligible*") {
-                    "<span class='tag pim' style='font-size: 0.7em; margin-left: 8px;'>PIM Eligible</span>"
-                } elseif ($roleAssignment.AssignmentType -like "*PIM*") {
-                    "<span class='tag' style='font-size: 0.7em; margin-left: 8px;'>PIM Active</span>"
-                } else {
-                    "<span class='tag permanent' style='font-size: 0.7em; margin-left: 8px;'>Permanent</span>"
-                }
-                
-                $allRolesList += "<div style='margin: 4px 0 4px 16px; font-size: 0.9em;'>• $($roleAssignment.RoleName) $assignmentBadge</div>"
-            }
-            $allRolesList += "</div>"
-        }
-        
-        $html += @"
-<tr>
-    <td $statusColor>
-        <strong>$($user.Name)</strong><br>
-        <small style='color: #666;'>$($userInfo.DisplayName)</small>
-    </td>
-    <td style='text-align: center;'>
-        <span class='stat-number'>$($user.Count)</span>
-    </td>
-    <td class='role-badge-container'>
-        $roleDisplay
-    </td>
-    <td><span class='tag $(if($status -eq "DISABLED") {"disabled"} else {"pim"})' $statusColor>$status</span></td>
-    <td>$lastSignIn</td>
-    <td>
-        <button onclick="toggleUserDetails('$userId')" class="action-button">
-            View All Roles
-        </button>
-        <div id="userDetails_$userId" class="user-details">
-            $allRolesList
-        </div>
-    </td>
-</tr>
-"@
-    }
-    
-    $html += @"
-            </table>
-        </div>
-        
-        <!-- Recommendations -->
-        <div class="section">
-            <h2>💡 Service-Specific Recommendations</h2>
-            <div class="security-alerts" style="background: linear-gradient(135deg, #e8f5e8, #c8e6c9); border-color: var(--success-color);">
-                <h3 style="color: var(--success-color);">Best Practices for $primaryService</h3>
-"@
-    
-    # Add service-specific recommendations
-    switch -Regex ($primaryService) {
-        "Azure AD|Entra ID" {
-            $html += @"
-                <div class="alert-item">• Implement regular access reviews for privileged roles</div>
-                <div class="alert-item">• Enable PIM for eligible assignments to reduce standing privileges</div>
-                <div class="alert-item">• Monitor Global Administrator usage and reduce count if possible</div>
-                <div class="alert-item">• Implement conditional access policies for administrative accounts</div>
-"@
-        }
-        "SharePoint" {
-            $html += @"
-                <div class="alert-item">• Regularly review site collection administrator assignments</div>
-                <div class="alert-item">• Implement SharePoint governance policies</div>
-                <div class="alert-item">• Monitor site creation and ownership</div>
-                <div class="alert-item">• Use SharePoint groups for easier permission management</div>
-"@
-        }
-        "Exchange" {
-            $html += @"
-                <div class="alert-item">• Review Exchange role group memberships regularly</div>
-                <div class="alert-item">• Implement management scopes for limited administrative access</div>
-                <div class="alert-item">• Monitor mailbox permissions and delegation</div>
-                <div class="alert-item">• Use Exchange RBAC for granular permissions</div>
-"@
-        }
-        "Microsoft Intune" {
-            $html += @"
-                <div class="alert-item">• Use Intune RBAC roles instead of broad Azure AD roles</div>
-                <div class="alert-item">• Implement scope-based assignments for administrative roles</div>
-                <div class="alert-item">• Regularly review device policy ownership</div>
-                <div class="alert-item">• Monitor app and device enrollment permissions</div>
-"@
-        }
-        "Teams" {
-            $html += @"
-                <div class="alert-item">• Review Teams administrative role assignments regularly</div>
-                <div class="alert-item">• Monitor Teams policy changes and ownership</div>
-                <div class="alert-item">• Implement governance for Teams creation and management</div>
-                <div class="alert-item">• Use Teams-specific roles for granular permissions</div>
-"@
-        }
-        "Purview|Compliance" {
-            $html += @"
-                <div class="alert-item">• Review compliance role group memberships regularly</div>
-                <div class="alert-item">• Monitor eDiscovery case access and permissions</div>
-                <div class="alert-item">• Implement data classification governance</div>
-                <div class="alert-item">• Regular audit of DLP and retention policies</div>
-"@
-        }
-        "Defender" {
-            $html += @"
-                <div class="alert-item">• Review security administrator assignments regularly</div>
-                <div class="alert-item">• Monitor security policy changes and configurations</div>
-                <div class="alert-item">• Implement least privilege for security operations</div>
-                <div class="alert-item">• Regular review of incident response permissions</div>
-"@
-        }
-        "Power Platform" {
-            $html += @"
-                <div class="alert-item">• Review Power Platform administrator assignments regularly</div>
-                <div class="alert-item">• Monitor environment creation and DLP policies</div>
-                <div class="alert-item">• Implement governance for app and flow creation</div>
-                <div class="alert-item">• Regular audit of connector and data source access</div>
-"@
-        }
-    }
-    
-    $html += @"
-            </div>
-        </div>
-        
-        <div class="footer">
-            <p><strong>$primaryService Role Audit Report</strong></p>
-            <p>Generated by M365 Role Audit PowerShell Module | $(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')</p>
-            <p>Total assignments analyzed: $totalAssignments | Authentication: Certificate-based</p>
-            <p style="margin-top: 15px; font-size: 0.9em; color: #888;">
-                Enhanced user analysis with expandable role details for improved readability.<br>
-                Click "View All Roles" to see complete role assignments grouped by service.
-            </p>
-        </div>
-    </div>
-</body>
-</html>
-"@
-    
-    try {
-        $html | Out-File -FilePath $OutputPath -Encoding UTF8
-        Write-Host "✓ Enhanced $primaryService HTML report generated: $OutputPath" -ForegroundColor Green
-
-        if (-not $Quite) {
-        
-            $fileSize = [math]::Round((Get-Item $OutputPath).Length / 1KB, 2)
-            Write-Host "Report size: $fileSize KB" -ForegroundColor Gray
-            Write-Host "Service: $primaryService" -ForegroundColor Gray
-            Write-Host "Total assignments: $totalAssignments" -ForegroundColor Gray
-            Write-Host "Enhanced features:" -ForegroundColor Cyan
-            Write-Host "  • Expandable user role details" -ForegroundColor White
-            Write-Host "  • Prioritized role display" -ForegroundColor White
-            Write-Host "  • Service-grouped role listings" -ForegroundColor White
-            Write-Host "  • Interactive role exploration" -ForegroundColor White
-            
-            # Open report if on Windows
-            if ($IsWindows -ne $false -and (Test-Path $OutputPath)) {
-                $openReport = Read-Host "Open enhanced report in browser? (y/N)"
-                if ($openReport -eq "y" -or $openReport -eq "Y") {
-                    Start-Process $OutputPath
-                }
-            }
-        }
-
-        return $OutputPath
-    }
-    catch {
-        Write-Error "Failed to generate enhanced service-specific HTML report: $($_.Exception.Message)"
-        return $null
-    }
-}
-
-function Export-M365ServiceAuditJsonReport {
-    param(
-        [Parameter(Mandatory = $true)]
-        [array]$AuditResults,
-        
-        [string]$OutputPath,
-        [string]$OrganizationName = "Organization",
-        [switch]$IncludeDetailedAnalysis
-    )
-    
-    if ($AuditResults.Count -eq 0) {
-        Write-Warning "No audit results provided"
-        return
-    }
-    
-    # Auto-detect service and generate appropriate filename
-    $primaryService = ($AuditResults | Group-Object Service | Sort-Object Count -Descending)[0].Name
-    if (-not $OutputPath) {
-        $serviceSlug = $primaryService -replace "[^a-zA-Z0-9]", ""
-        $OutputPath = ".\M365_${serviceSlug}_Audit_$(Get-Date -Format 'yyyyMMdd_HHmmss').json"
-    }
-    
-    # Build service-specific JSON report
-    $report = @{
-        metadata = @{
-            organizationName = $OrganizationName
-            primaryService = $primaryService
-            generatedDate = (Get-Date).ToString("yyyy-MM-ddTHH:mm:ssZ")
-            reportType = "Service-Specific"
-            totalAssignments = $AuditResults.Count
-            uniqueUsers = ($AuditResults | Where-Object { $_.UserPrincipalName } | Select-Object -Unique UserPrincipalName).Count
-            authenticationUsed = ($AuditResults | Group-Object AuthenticationType | ForEach-Object { @{ method = $_.Name; count = $_.Count } })
-        }
-        
-        serviceAnalysis = @{
-            serviceName = $primaryService
-            totalAssignments = $AuditResults.Count
-            roleDistribution = @($AuditResults | Group-Object RoleName | Sort-Object Count -Descending | ForEach-Object {
-                @{
-                    roleName = $_.Name
-                    userCount = $_.Count
-                    assignmentTypes = @($_.Group | Group-Object AssignmentType | ForEach-Object { 
-                        @{ type = $_.Name; count = $_.Count } 
-                    })
-                }
-            })
-            userAnalysis = @($AuditResults | Where-Object { $_.UserPrincipalName } | Group-Object UserPrincipalName | 
-                           Sort-Object Count -Descending | Select-Object -First 20 | ForEach-Object {
-                $userInfo = $_.Group[0]
-                @{
-                    userPrincipalName = $_.Name
-                    displayName = $userInfo.DisplayName
-                    roleCount = $_.Count
-                    roles = @($_.Group | Select-Object -ExpandProperty RoleName)
-                    isEnabled = $userInfo.UserEnabled
-                    lastSignIn = $userInfo.LastSignIn
-                }
-            })
-        }
-        
-        assignments = @($AuditResults | ForEach-Object {
-            $assignment = @{
-                service = $_.Service
-                userPrincipalName = $_.UserPrincipalName
-                displayName = $_.DisplayName
-                roleName = $_.RoleName
-                assignmentType = $_.AssignmentType
-                assignedDateTime = $_.AssignedDateTime
-                userEnabled = $_.UserEnabled
-                lastSignIn = $_.LastSignIn
-                scope = $_.Scope
-                authenticationType = $_.AuthenticationType
-            }
-            
-            # Add service-specific properties
-            if ($_.PrincipalType) { $assignment.principalType = $_.PrincipalType }
-            if ($_.SiteTitle) { $assignment.siteTitle = $_.SiteTitle }
-            if ($_.RoleType) { $assignment.roleType = $_.RoleType }
-            if ($_.PolicyType) { $assignment.policyType = $_.PolicyType }
-            # Add other service-specific fields as needed...
-            
-            $assignment
-        })
-    }
-    
-    # Add service-specific analysis if requested
-    if ($IncludeDetailedAnalysis) {
-        switch -Regex ($primaryService) {
-            "Azure AD|Entra ID" {
-                $pimEligible = $AuditResults | Where-Object { $_.AssignmentType -like "*Eligible*" }
-                $globalAdmins = $AuditResults | Where-Object { $_.RoleName -eq "Global Administrator" }
-                
-                $report.serviceSpecificAnalysis = @{
-                    azureADAnalysis = @{
-                        globalAdministrators = $globalAdmins.Count
-                        pimEligibleAssignments = $pimEligible.Count
-                        privilegedRoles = ($AuditResults | Where-Object { $_.RoleName -match "Administrator" }).Count
-                        complianceStatus = @{
-                            globalAdminLimit = @{
-                                compliant = $globalAdmins.Count -le 5
-                                current = $globalAdmins.Count
-                                recommended = 5
-                            }
-                            pimImplementation = @{
-                                implemented = $pimEligible.Count -gt 0
-                                eligibleCount = $pimEligible.Count
-                            }
-                        }
-                    }
-                }
-            }
-            "Microsoft Intune" {
-                $serviceAdmins = $AuditResults | Where-Object { $_.RoleName -eq "Intune Service Administrator" }
-                $rbacRoles = $AuditResults | Where-Object { $_.RoleType -eq "IntuneRBAC" }
-                $azureADRoles = $AuditResults | Where-Object { $_.RoleType -eq "AzureAD" }
-                
-                $report.serviceSpecificAnalysis = @{
-                    intuneAnalysis = @{
-                        serviceAdministrators = $serviceAdmins.Count
-                        rbacAssignments = $rbacRoles.Count
-                        azureADAssignments = $azureADRoles.Count
-                        builtInRoles = ($AuditResults | Where-Object { $_.IsBuiltIn -eq $true }).Count
-                        customRoles = ($AuditResults | Where-Object { $_.IsBuiltIn -eq $false }).Count
-                        policyOwnership = ($AuditResults | Where-Object { $_.RoleType -eq "PolicyOwner" }).Count
-                    }
-                }
-            }
-            # Add analysis for other services...
-        }
-    }
-    
-    try {
-        $jsonOutput = $report | ConvertTo-Json -Depth 10
-        $jsonOutput | Out-File -FilePath $OutputPath -Encoding UTF8
-        
-        Write-Host "✓ $primaryService JSON report generated: $OutputPath" -ForegroundColor Green
-        
-        $fileSize = [math]::Round((Get-Item $OutputPath).Length / 1KB, 2)
-        Write-Host "File size: $fileSize KB" -ForegroundColor Gray
-        Write-Host "Service: $primaryService" -ForegroundColor Gray
-        Write-Host "Total assignments: $($AuditResults.Count)" -ForegroundColor Gray
-        
-        return $OutputPath
-    }
-    catch {
-        Write-Error "Failed to generate service-specific JSON report: $($_.Exception.Message)"
-        return $null
-    }
-}
-
-# Convenience function that automatically detects service and calls appropriate export
-function Export-M365ServiceAuditReport {
-    param(
-        [Parameter(Mandatory = $true)]
-        [array]$AuditResults,
-        
-        [ValidateSet("HTML", "JSON", "Both")]
-        [string]$Format = "HTML",
-        
-        [string]$OutputPath,
-        [string]$OrganizationName = "Organization",
-        [switch]$IncludeCharts,
-        [switch]$IncludeDetailedAnalysis
-    )
-    
-    if ($AuditResults.Count -eq 0) {
-        Write-Warning "No audit results provided"
-        return
-    }
-    
-    $results = @()
-    
-    if ($Format -eq "HTML" -or $Format -eq "Both") {
-        $htmlPath = Export-M365ServiceAuditHtmlReport -AuditResults $AuditResults -OutputPath $OutputPath -OrganizationName $OrganizationName -IncludeCharts:$IncludeCharts
-        if ($htmlPath) { $results += $htmlPath }
-    }
-    
-    if ($Format -eq "JSON" -or $Format -eq "Both") {
-        $jsonPath = if ($OutputPath -and $Format -eq "Both") {
-            $OutputPath -replace "\.html$", ".json"
-        } else { 
-            $OutputPath 
-        }
-        $jsonPath = Export-M365ServiceAuditJsonReport -AuditResults $AuditResults -OutputPath $jsonPath -OrganizationName $OrganizationName -IncludeDetailedAnalysis:$IncludeDetailedAnalysis
-        if ($jsonPath) { $results += $jsonPath }
-    }
-    
-    return $results
-}
-
 function Export-M365AuditExcelReport {
     param(
         [Parameter(Mandatory = $true)]
@@ -3590,7 +2491,8 @@ function Export-M365AuditExcelReport {
         [switch]$AutoOpen
     )
     
-    Write-Host "Generating Excel audit report..." -ForegroundColor Cyan
+    Write-Host "=== Generating Excel Audit Report ===" -ForegroundColor Green
+    Write-Host "Output Path: $OutputPath" -ForegroundColor Cyan
     
     if ($AuditResults.Count -eq 0) {
         Write-Warning "No audit results provided"
@@ -3611,6 +2513,11 @@ function Export-M365AuditExcelReport {
     }
     
     Import-Module ImportExcel -Force
+
+    $StartRow = 1
+    $StartColumn = 1
+
+    $excel = Export-Excel -Path $OutputPath -WorksheetName "Summary" -PassThru
     
     try {
         # Remove existing file if it exists
@@ -3618,412 +2525,353 @@ function Export-M365AuditExcelReport {
             Remove-Item $OutputPath -Force
         }
         
-        # Calculate summary statistics
+        # Calculate statistics matching HTML report
         $totalAssignments = $AuditResults.Count
-        $uniqueUsers = ($AuditResults | Where-Object { $_.UserPrincipalName } | Select-Object -Unique UserPrincipalName).Count
-        $services = $AuditResults | Group-Object Service | Sort-Object Count -Descending
-        $topRoles = $AuditResults | Group-Object RoleName | Sort-Object Count -Descending | Select-Object -First 10
-        $usersWithMostRoles = $AuditResults | Group-Object UserPrincipalName | Sort-Object Count -Descending | Select-Object -First 10
+        $uniqueUsers = ($AuditResults | Where-Object { $_.UserPrincipalName -and $_.UserPrincipalName -ne "Unknown" } | 
+                       Select-Object -Unique UserPrincipalName).Count
+        $servicesAudited = ($AuditResults | Group-Object Service).Count
         $globalAdmins = $AuditResults | Where-Object { $_.RoleName -eq "Global Administrator" }
-        $disabledUsers = $AuditResults | Where-Object { $_.UserEnabled -eq $false }
         $pimEligible = $AuditResults | Where-Object { $_.AssignmentType -like "*Eligible*" }
         $pimActive = $AuditResults | Where-Object { $_.AssignmentType -like "*Active (PIM*" }
-        $authTypes = $AuditResults | Group-Object AuthenticationType
+        $services = $AuditResults | Group-Object Service | Sort-Object Count -Descending
         
-        Write-Host "Creating Summary sheet..." -ForegroundColor Cyan
+        Write-Host "Creating Summary Dashboard..." -ForegroundColor Cyan
+        $Summary = [Ordered]@{                                            
+            "Total Assignments" = $totalAssignments
+            "Unique Users" = $uniqueUsers
+            "Services Audited" = $servicesAudited
+            "Global Admins" = $globalAdmins.count
+            "PIM Active" = $pimActive.Count
+            "PIM Eligible" = $pimEligible.Count
+        }
+
+        $excel = $Summary.GetEnumerator() | Select-Object @{Name="Metric"; Expression={$_.Name}}, Value  | `
+            Export-Excel    -ExcelPackage $excel `
+                            -WorksheetName "Summary" `
+                            -StartRow $StartRow `
+                            -TableName 'Summary_Metrics' `
+                            -Title 'Summary' `
+                            -TitleSize 14 `
+                            -TitleBold `
+                            -PassThru
         
-        # Create Summary Sheet
-        $summaryData = @()
         
-        # Organization Overview
-        $summaryData += [PSCustomObject]@{
-            Category = "Organization Overview"
-            Metric = "Organization Name"
-            Value = $OrganizationName
-            Details = ""
-            Status = "Info"
-        }
-        $summaryData += [PSCustomObject]@{
-            Category = "Organization Overview"
-            Metric = "Report Generated"
-            Value = (Get-Date -Format 'yyyy-MM-dd HH:mm:ss')
-            Details = ""
-            Status = "Info"
-        }
-        $summaryData += [PSCustomObject]@{
-            Category = "Organization Overview"
-            Metric = "Total Role Assignments"
-            Value = $totalAssignments
-            Details = "Across all audited services"
-            Status = "Info"
-        }
-        $summaryData += [PSCustomObject]@{
-            Category = "Organization Overview"
-            Metric = "Unique Users with Roles"
-            Value = $uniqueUsers
-            Details = "Distinct users with role assignments"
-            Status = "Info"
-        }
-        $summaryData += [PSCustomObject]@{
-            Category = "Organization Overview"
-            Metric = "Services Audited"
-            Value = $services.Count
-            Details = ($services.Name -join ", ")
-            Status = "Info"
-        }
-        
-        # Security Metrics
-        $summaryData += [PSCustomObject]@{
-            Category = "Security Metrics"
-            Metric = "Global Administrators"
-            Value = $globalAdmins.Count
-            Details = if ($globalAdmins.Count -gt 5) { "⚠️ Exceeds recommended limit of 5" } else { "✓ Within recommended limit" }
-            Status = if ($globalAdmins.Count -gt 5) { "Warning" } else { "Good" }
-        }
-        $summaryData += [PSCustomObject]@{
-            Category = "Security Metrics"
-            Metric = "Disabled Users with Roles"
-            Value = $disabledUsers.Count
-            Details = if ($disabledUsers.Count -gt 0) { "⚠️ Review required" } else { "✓ No issues found" }
-            Status = if ($disabledUsers.Count -gt 0) { "Warning" } else { "Good" }
-        }
-        $summaryData += [PSCustomObject]@{
-            Category = "Security Metrics"
-            Metric = "PIM Eligible Assignments"
-            Value = $pimEligible.Count
-            Details = if ($pimEligible.Count -eq 0) { "⚠️ Consider implementing PIM" } else { "✓ PIM in use" }
-            Status = if ($pimEligible.Count -eq 0) { "Warning" } else { "Good" }
-        }
-        $summaryData += [PSCustomObject]@{
-            Category = "Security Metrics"
-            Metric = "PIM Active Assignments"
-            Value = $pimActive.Count
-            Details = "Currently activated PIM roles"
-            Status = "Info"
-        }
-        
-        # Authentication Overview
-        foreach ($authType in $authTypes) {
-            $summaryData += [PSCustomObject]@{
-                Category = "Authentication Methods"
-                Metric = "$($authType.Name) Authentication"
-                Value = $authType.Count
-                Details = "Assignments using this auth method"
-                Status = if ($authType.Name -eq "Certificate") { "Good" } elseif ($authType.Name -eq "ClientSecret") { "Warning" } else { "Info" }
-            }
-        }
-        
-        # Service Breakdown
+        $summaryCards = @()
+
         foreach ($service in $services) {
             $percentage = [math]::Round(($service.Count / $totalAssignments) * 100, 1)
-            $summaryData += [PSCustomObject]@{
-                Category = "Service Breakdown"
-                Metric = $service.Name
-                Value = $service.Count
-                Details = "$percentage% of total assignments"
-                Status = "Info"
+            $summaryCards += [PSCustomObject]@{
+                Service = $service.Name
+                Assignments = $service.Count
+                Percentage = "$percentage%"
             }
         }
+
+        $StartRow += $Summary.Keys.Count + 3
         
-        # Export Summary Sheet with formatting
-        $summaryData | Export-Excel -Path $OutputPath -WorksheetName "Summary" -TableStyle Medium2 -AutoSize -FreezeTopRow
+        $Chart = New-ExcelChartDefinition -ChartType Pie `
+                                            -XRange Service `
+                                            -YRange Assignments `
+                                            -Title "Service Assignment Distribution" `
+                                            -TitleSize 10 `
+                                            -Row ($StartRow - 1) `
+                                            -Column ($StartColumn + 2) `
+                                            -LegendSize 8 `
+                                            -Width 200 `
+                                            -Height 200
+
+        $Excel = $summaryCards | Export-Excel   -ExcelPackage $excel `
+                                                -WorksheetName 'Summary' `
+                                                -StartRow $StartRow `
+                                                -Title "Assignments" `
+                                                -TableName 'Assignments' `
+                                                -TitleBold `
+                                                -TitleSize '14' `
+                                                -AutoNameRange `
+                                                -ExcelChartDefinition $Chart `
+                                                -PassThru
         
-        # Add conditional formatting to Summary sheet
-        $excel = Open-ExcelPackage -Path $OutputPath
-        $summaryWorksheet = $excel.Workbook.Worksheets["Summary"]
+        $StartRow += ($summaryCards.Count + 3)
+
+        # Show statistics
+        $Stats = Get-AuditStatistics -AuditResults $AuditResults 
+
+        $Summary = Get-ReportSummary -AuditResults $AuditResults -Stats $Stats
+
+
+        # Users with most roles
+        $Chart = New-ExcelChartDefinition -ChartType BarStacked `
+                                            -XRange 'Display_Name' `
+                                            -YRange 'Number_Of_Roles' `
+                                            -Title 'Users with Most Roles' `
+                                            -TitleSize 10 `
+                                            -Row ($StartRow ) `
+                                            -RowOffSetPixels -10 `
+                                            -Column ($StartColumn + 2) `
+                                            -Width 750 `
+                                            -Heigh 325 `
+                                            -NoLegend `
+    
+
+        $excel = $Summary.usersWithMostRoles | Select-Object @{Name = 'Display Name'; Expression = {$_.DisplayName}}, `
+                                        @{Name = 'User Principal Name'; Expression = {$_.userprincipalName}}, `
+                                        @{Name = 'Number of Roles'; Expression = {$_.roleCount}} | `
+                    Export-Excel -ExcelPackage $excel `
+                                -WorksheetName 'Summary' `
+                                -StartRow $StartRow `
+                                -Title 'Users with Most Roles' `
+                                -TableName 'ReportSummary' `
+                                -TitleBold `
+                                -TitleSize 14 `
+                                -AutoNameRange `
+                                -ExcelChartDefinition $Chart `
+                                -PassThru -WarningAction SilentlyContinue
         
-        # Format Status column with colors
-        $statusColumn = 5 # Column E (Status)
-        $dataRange = $summaryWorksheet.Dimension
+        $StartRow += ($Summary.usersWithMostRoles.Count + 3)
+
+        # Assignment Types
+        $Chart = New-ExcelChartDefinition -ChartType Pie `
+                                    -XRange 'Assignment_Type' `
+                                    -YRange 'Assignments' `
+                                    -Title "Assignment Types" `
+                                    -TitleSize 10 `
+                                    -LegendSize 8 `
+                                    -Row ($StartRow - 1) `
+                                    -Column ($StartColumn + 2) `
+                                    -Width 200 `
+                                    -Height 200
+
+        $excel = $Summary.assignmentTypes | Select-Object @{Name = 'Assignment Type'; Expression={$_.type}}, `
+                                                            @{Name = 'Percentage'; Expression = {$_.percentage}}, `
+                                                            @{Name = 'Assignments'; Expression = {$_.count}} | `
+                Export-Excel -ExcelPackage $Excel `
+                            -WorksheetName 'Summary' `
+                            -StartRow $StartRow `
+                            -Title 'Assignment Types' `
+                            -TableName 'AssignmentTypes' `
+                            -TitleBold `
+                            -TitleSize 12 `
+                            -AutoNameRange `
+                            -ExcelChartDefinition $Chart `
+                            -PassThru -WarningAction SilentlyContinue
         
-        for ($row = 2; $row -le $dataRange.End.Row; $row++) {
-            $status = $summaryWorksheet.Cells[$row, $statusColumn].Text
-            switch ($status) {
-                "Good" { 
-                    $summaryWorksheet.Cells[$row, $statusColumn].Style.Fill.PatternType = [OfficeOpenXml.Style.ExcelFillStyle]::Solid
-                    $summaryWorksheet.Cells[$row, $statusColumn].Style.Fill.BackgroundColor.SetColor([System.Drawing.Color]::LightGreen)
-                }
-                "Warning" { 
-                    $summaryWorksheet.Cells[$row, $statusColumn].Style.Fill.PatternType = [OfficeOpenXml.Style.ExcelFillStyle]::Solid
-                    $summaryWorksheet.Cells[$row, $statusColumn].Style.Fill.BackgroundColor.SetColor([System.Drawing.Color]::Yellow)
-                }
-                "Info" { 
-                    $summaryWorksheet.Cells[$row, $statusColumn].Style.Fill.PatternType = [OfficeOpenXml.Style.ExcelFillStyle]::Solid
-                    $summaryWorksheet.Cells[$row, $statusColumn].Style.Fill.BackgroundColor.SetColor([System.Drawing.Color]::LightBlue)
-                }
+        $StartRow += ($Summary.assignmentTypes.Count + 3)
+
+        # Top Roles
+        $Chart = New-ExcelChartDefinition -ChartType BarStacked `
+                                            -XRange 'Role' `
+                                            -YRange 'Assignment_Count' `
+                                            -Title 'Top Roles' `
+                                            -TitleSize 10 `
+                                            -Row ($StartRow ) `
+                                            -RowOffSetPixels -10 `
+                                            -Column ($StartColumn + 3) `
+                                            -Width 800 `
+                                            -Height 350 ` `
+                                            -NoLegend
+                                            
+        $excel = $Summary.topRoles | Sort-Object -Property riskLevel | `
+                    Select-Object   @{Name = 'Role'; Expression={$_.roleName}}, `
+                                    @{Name = 'Assignment Count'; Expression = {$_.assignmentCount}}, `
+                                    @{Name = 'Risk Level'; Expression={$_.riskLevel}}, `
+                                    @{Name = 'Services'; Expression = {$_.services -join ','}} | `
+                    Export-Excel    -ExcelPackage $excel `
+                                    -WorksheetName 'Summary' `
+                                    -StartRow $StartRow `
+                                    -TableName 'topRoles' `
+                                    -Title 'Top Roles' `
+                                    -TitleBold `
+                                    -TitleSize 14 `
+                                    -AutoNameRange `
+                                    -ExcelChartDefinition $Chart `
+                                    -PassThru -WarningAction SilentlyContinue
+
+        $StartRow += ($Summary.topRoles.Count + 3)
+
+        Write-Host "✓ Summary dashboard created" -ForegroundColor Green
+        
+        # === CREATE SHEETS ===
+
+        # ==== Assignments By Roles ====
+        Write-Host "Creating Assignments by Role Sheet..." -ForegroundColor Cyan
+
+        $StartRow = 1
+        
+        # Group Data By Service
+        $Worksheet = $excel.Workbook.Worksheets.Add("by Role")
+        
+        $resultsByService = $AuditResults | Group-Object -Property Service
+        foreach ($Service in $resultsByService) {
+            $Range = $Worksheet.Cells.Item($StartRow, $StartColumn).Address
+            Set-ExcelRange  -Range $Range `
+                            -Worksheet $Worksheet `
+                            -FontColor Blue `
+                            -FontSize 14 `
+                            -Bold `
+                            -Value $Service.Name 
+
+            $Range = $Worksheet.Cells.Item($StartRow, $StartColumn + 1).Address
+            Set-ExcelRange  -Range $Range`
+                            -Worksheet $Worksheet `
+                            -FontColor Blue `
+                            -FontSize 14 `
+                            -Value 'Assignments:' `
+                            -HorizontalAlignment:Right
+
+            $Range = $Worksheet.Cells.Item($StartRow, $StartColumn + 2).Address 
+            Set-ExcelRange  -Range $Range `
+                            -Worksheet $Worksheet `
+                            -FontSize 14 `
+                            -Value $Service.Count 
+    
+            $serviceByRoleName = $Service.Group | Group-Object -Property RoleName
+
+            $StartRow += 2
+
+            foreach ($Role in $serviceByRoleName) {
+                $Range = $Worksheet.Cells.Item($StartRow, $StartColumn).Address
+                Set-ExcelRange  -Range $Range `
+                                -Worksheet $Worksheet `
+                                -FontColor Blue `
+                                -FontSize 12 `
+                                -Bold `
+                                -Value $Role.Name 
+
+                $Range = $Worksheet.Cells.Item($StartRow,$StartColumn + 1).Address
+                Set-ExcelRange  -Range $Range `
+                                -Worksheet $Worksheet `
+                                -FontColor Blue `
+                                -FontSize 12 `
+                                -Value 'Assignments:' `
+                                -HorizontalAlignment:Right 
+
+                $Range = $Worksheet.Cells.Item($StartRow, $StartColumn + 2).Address
+                Set-ExcelRange -Range $Range `
+                               -Worksheet $Worksheet `
+                                -FontSize 12 `
+                                -Value $Role.Count 
+
+                $StartRow += 1
+                $random = Get-Random
+                $TableName = ($Role.Name -replace " ","_") + $random.ToString()
+                $excel = $Role.Group | Select-Object DisplayName, UserPrincipalName, AssignmentType | `
+                    Export-Excel    -ExcelPackage $excel `
+                                    -WorksheetName $Worksheet.Name `
+                                    -TableName $TableName `
+                                    -StartRow $StartRow `
+                                    -PassThru
+
+                $StartRow += ($Role.Count + 2)
             }
+            
         }
-        
-        Close-ExcelPackage $excel
-        
-        # Create service-specific sheets grouped by role
-        Write-Host "Creating service sheets grouped by role..." -ForegroundColor Cyan
-        foreach ($service in $services) {
-            $serviceData = $AuditResults | Where-Object { $_.Service -eq $service.Name }
-            $serviceRoleGroups = $serviceData | Group-Object RoleName | Sort-Object Count -Descending
+
+        Write-Host "✓ By Role Sheet created" -ForegroundColor Green
+
+        # ==== Assignments By Users ====
+
+        Write-Host "Creating Assignments by User Sheet..." -ForegroundColor Cyan
+
+        $resultsByUser = $AuditResults | Group-Object -Property displayName
+
+        $Worksheet = $excel.Workbook.Worksheets.Add('By User')
+
+        $StartRow = 1
+
+        foreach ($User in $resultsByUser) {
+            $Random = Get-Random
+            $TableName = ($User.displayName -replace " ","_") + $Random.ToString()
+            $Range = $Worksheet.Cells.Item($StartRow, $StartColumn).Address
+            Set-ExcelRange -Range $Range `
+                            -Worksheet $Worksheet `
+                            -FontSize 14 `
+                            -FontColor Blue `
+                            -Value $User.Name
             
-            $roleGroupData = @()
-            foreach ($roleGroup in $serviceRoleGroups) {
-                foreach ($assignment in $roleGroup.Group) {
-                    $roleGroupData += [PSCustomObject]@{
-                        RoleName = $assignment.RoleName
-                        UserPrincipalName = $assignment.UserPrincipalName
-                        DisplayName = $assignment.DisplayName
-                        AssignmentType = $assignment.AssignmentType
-                        AssignedDateTime = $assignment.AssignedDateTime
-                        UserEnabled = $assignment.UserEnabled
-                        LastSignIn = $assignment.LastSignIn
-                        Scope = $assignment.Scope
-                        AuthenticationType = $assignment.AuthenticationType
-                        PIMEndDateTime = $assignment.PIMEndDateTime
-                        RoleCount = $roleGroup.Count
-                    }
-                }
-            }
+            $Range = $Worksheet.Cells.Item($StartRow, $StartColumn + 1).Address
+            Set-ExcelRange -Range $Range `
+                            -Worksheet $Worksheet `
+                            -FontSize 14 `
+                            -FontColor Blue `
+                            -Value 'Assignments:' `
+                            -HorizontalAlignment:Right
             
-            $safeSheetName = ($service.Name -replace '[^\w\s-]', '').Substring(0, [Math]::Min(25, $service.Name.Length)) + " by Role"
-            $roleGroupData | Export-Excel -Path $OutputPath -WorksheetName $safeSheetName -TableStyle Medium6 -AutoSize -FreezeTopRow
-        }
-        
-        # Create service-specific sheets grouped by assignee
-        Write-Host "Creating service sheets grouped by assignee..." -ForegroundColor Cyan
-        foreach ($service in $services) {
-            $serviceData = $AuditResults | Where-Object { $_.Service -eq $service.Name }
-            $serviceUserGroups = $serviceData | Group-Object UserPrincipalName | Sort-Object Count -Descending
-            
-            $userGroupData = @()
-            foreach ($userGroup in $serviceUserGroups) {
-                if ($userGroup.Name) {
-                    $userRoles = $userGroup.Group | Sort-Object RoleName
-                    $userInfo = $userRoles | Select-Object -First 1
-                    
-                    foreach ($assignment in $userRoles) {
-                        $userGroupData += [PSCustomObject]@{
-                            UserPrincipalName = $assignment.UserPrincipalName
-                            DisplayName = $assignment.DisplayName
-                            UserEnabled = $assignment.UserEnabled
-                            LastSignIn = $assignment.LastSignIn
-                            RoleName = $assignment.RoleName
-                            AssignmentType = $assignment.AssignmentType
-                            AssignedDateTime = $assignment.AssignedDateTime
-                            Scope = $assignment.Scope
-                            AuthenticationType = $assignment.AuthenticationType
-                            PIMEndDateTime = $assignment.PIMEndDateTime
-                            TotalRolesInService = $userGroup.Count
-                        }
-                    }
-                }
-            }
-            
-            $safeSheetName = ($service.Name -replace '[^\w\s-]', '').Substring(0, [Math]::Min(22, $service.Name.Length)) + " by User"
-            $userGroupData | Export-Excel -Path $OutputPath -WorksheetName $safeSheetName -TableStyle Medium10 -AutoSize -FreezeTopRow
-        }
-        
-        # Create detailed assignments sheet
-        Write-Host "Creating detailed assignments sheet..." -ForegroundColor Cyan
-        $detailedData = $AuditResults | Select-Object Service, UserPrincipalName, DisplayName, RoleName, AssignmentType, 
-                                                   AssignedDateTime, UserEnabled, LastSignIn, Scope, AuthenticationType,
-                                                   PIMEndDateTime, RoleDefinitionId, AssignmentId | Sort-Object Service, RoleName, UserPrincipalName
-        
-        $detailedData | Export-Excel -Path $OutputPath -WorksheetName "All Assignments" -TableStyle Medium14 -AutoSize -FreezeTopRow
-        
-        # Create top roles analysis sheet
-        Write-Host "Creating top roles analysis sheet..." -ForegroundColor Cyan
-        $topRolesData = @()
-        foreach ($role in $topRoles | Select-Object -First 15) {
-            $roleAssignments = $AuditResults | Where-Object { $_.RoleName -eq $role.Name }
-            $services = ($roleAssignments | Group-Object Service).Name -join ", "
-            $users = ($roleAssignments | Group-Object UserPrincipalName).Count
-            $disabledUsersInRole = ($roleAssignments | Where-Object { $_.UserEnabled -eq $false }).Count
-            $pimEligibleInRole = ($roleAssignments | Where-Object { $_.AssignmentType -like "*Eligible*" }).Count
-            $pimActiveInRole = ($roleAssignments | Where-Object { $_.AssignmentType -like "*Active (PIM*" }).Count
-            
-            # Determine risk level based on role name
-            $riskLevel = switch -Regex ($role.Name) {
-                "Global Administrator|Company Administrator" { "CRITICAL" }
-                "Security Administrator|Exchange Administrator|SharePoint Administrator|Intune Service Administrator" { "HIGH" }
-                ".*Administrator.*|.*Admin.*" { "MEDIUM" }
-                default { "LOW" }
-            }
-            
-            $topRolesData += [PSCustomObject]@{
-                RoleName = $role.Name
-                TotalAssignments = $role.Count
-                UniqueUsers = $users
-                RiskLevel = $riskLevel
-                ServicesUsedIn = $services
-                DisabledUsersWithRole = $disabledUsersInRole
-                PIMEligibleAssignments = $pimEligibleInRole
-                PIMActiveAssignments = $pimActiveInRole
-                PercentageOfTotal = [math]::Round(($role.Count / $totalAssignments) * 100, 1)
-                Status = if ($disabledUsersInRole -gt 0) { "NEEDS REVIEW" } elseif ($pimEligibleInRole -gt 0) { "PIM ENABLED" } else { "ACTIVE" }
-            }
-        }
-        
-        $topRolesData | Export-Excel -Path $OutputPath -WorksheetName "Top Roles Analysis" -TableStyle Medium16 -AutoSize -FreezeTopRow
-        
-        # Create top users analysis sheet
-        Write-Host "Creating top users analysis sheet..." -ForegroundColor Cyan
-        $topUsersData = @()
-        foreach ($user in $usersWithMostRoles | Select-Object -First 20) {
-            if ($user.Name) {
-                $userRoles = $AuditResults | Where-Object { $_.UserPrincipalName -eq $user.Name }
-                $userInfo = $userRoles | Select-Object -First 1
-                $services = ($userRoles | Group-Object Service).Name -join ", "
-                $roles = ($userRoles | Group-Object RoleName).Name -join ", "
+            $Range = $Worksheet.Cells.Item($StartRow, $StartColumn + 2).Address
+            Set-ExcelRange -Range $Range `
+                            -Worksheet $Worksheet `
+                            -FontSize 14 `
+                            -Value $User.Count
+
+            $StartRow += 2
+
+            $UserResultsByService = $User.Group | Group-Object -Property Service
+
+            foreach ($Service in $UserResultsByService) {
+                $Range = $Worksheet.Cells.Item($StartRow, $StartColumn).Address
+                Set-ExcelRange -Range $Range `
+                                -Worksheet $Worksheet `
+                                -FontSize 12 `
+                                -FontColor Blue `
+                                -Value $Service.Name `
+
+                $Range = $Worksheet.Cells.Item($StartRow, $StartColumn + 1).Address
+                Set-ExcelRange -Range $Range `
+                                -Worksheet $Worksheet `
+                                -FontSize 12 `
+                                -FontColor Blue `
+                                -Value 'Assignments:' `
+                                -HorizontalAlignment:Right
                 
-                $topUsersData += [PSCustomObject]@{
-                    UserPrincipalName = $user.Name
-                    DisplayName = $userInfo.DisplayName
-                    TotalRoles = $user.Count
-                    UserEnabled = $userInfo.UserEnabled
-                    LastSignIn = $userInfo.LastSignIn
-                    ServicesWithRoles = $services
-                    RoleNames = $roles
-                    Status = if ($userInfo.UserEnabled -eq $false) { "DISABLED" } else { "Active" }
-                }
+                $Range = $Worksheet.Cells.Item($StartRow, $StartColumn + 3).Address
+                Set-ExcelRange -Range $Range `
+                                -Worksheet $Worksheet `
+                                -FontSize 12 `
+                                -Value $Service.Assignments 
+                
+                
+                $StartRow += 1
+                $TableName = "Table_" + (Get-Random).ToString()
+                $excel = $Service.Group | Select-Object DisplayName, RoleName | `
+                    Export-Excel -ExcelPackage $excel `
+                                    -WorksheetName $Worksheet.Name `
+                                    -StartRow $StartRow`
+                                    -TableName $TableName `
+                                    -PassThru               
+                $StartRow += ($Service.count +2) 
             }
+
         }
-        
-        $topUsersData | Export-Excel -Path $OutputPath -WorksheetName "Top Users Analysis" -TableStyle Medium18 -AutoSize -FreezeTopRow
-        
-        # Create security alerts sheet
-        Write-Host "Creating security alerts sheet..." -ForegroundColor Cyan
-        $alertsData = @()
-        
-        if ($globalAdmins.Count -gt 5) {
-            $alertsData += [PSCustomObject]@{
-                AlertType = "Excessive Global Admins"
-                Severity = "High"
-                Count = $globalAdmins.Count
-                Recommendation = "Reduce Global Administrator count to 5 or fewer"
-                Details = ($globalAdmins.UserPrincipalName -join "; ")
-            }
-        }
-        
-        if ($disabledUsers.Count -gt 0) {
-            $disabledUsersList = ($disabledUsers | Select-Object -First 10).UserPrincipalName -join "; "
-            if ($disabledUsers.Count -gt 10) { $disabledUsersList += "... and $($disabledUsers.Count - 10) more" }
-            
-            $alertsData += [PSCustomObject]@{
-                AlertType = "Disabled Users with Roles"
-                Severity = "Medium"
-                Count = $disabledUsers.Count
-                Recommendation = "Remove role assignments from disabled accounts"
-                Details = $disabledUsersList
-            }
-        }
-        
-        $clientSecretAuth = $authTypes | Where-Object { $_.Name -eq "ClientSecret" }
-        if ($clientSecretAuth) {
-            $alertsData += [PSCustomObject]@{
-                AlertType = "Client Secret Authentication"
-                Severity = "Medium"
-                Count = $clientSecretAuth.Count
-                Recommendation = "Migrate to certificate-based authentication"
-                Details = "Some connections use less secure client secret authentication"
-            }
-        }
-        
-        if ($pimEligible.Count -eq 0 -and $totalAssignments -gt 0) {
-            $alertsData += [PSCustomObject]@{
-                AlertType = "No PIM Eligible Assignments"
-                Severity = "Medium"
-                Count = 0
-                Recommendation = "Implement Privileged Identity Management (PIM)"
-                Details = "All privileged roles appear to be permanently assigned"
-            }
-        }
-        
-        # Check for users with excessive roles (>10)
-        $excessiveRoleUsers = $usersWithMostRoles | Where-Object { $_.Count -gt 10 }
-        if ($excessiveRoleUsers.Count -gt 0) {
-            $excessiveUsersList = ($excessiveRoleUsers | Select-Object -First 5).Name -join "; "
-            if ($excessiveRoleUsers.Count -gt 5) { $excessiveUsersList += "... and $($excessiveRoleUsers.Count - 5) more" }
-            
-            $alertsData += [PSCustomObject]@{
-                AlertType = "Role Sprawl"
-                Severity = "Low"
-                Count = $excessiveRoleUsers.Count
-                Recommendation = "Review role assignments for principle of least privilege"
-                Details = "Users with >10 roles: $excessiveUsersList"
-            }
-        }
-        
-        if ($alertsData.Count -eq 0) {
-            $alertsData += [PSCustomObject]@{
-                AlertType = "No Issues Found"
-                Severity = "Good"
-                Count = 0
-                Recommendation = "Continue monitoring and regular access reviews"
-                Details = "No significant security alerts identified"
-            }
-        }
-        
-        $alertsData | Export-Excel -Path $OutputPath -WorksheetName "Security Alerts" -TableStyle Medium22 -AutoSize -FreezeTopRow
-        
-        # Add conditional formatting to Security Alerts sheet
-        $excel = Open-ExcelPackage -Path $OutputPath
-        $alertsWorksheet = $excel.Workbook.Worksheets["Security Alerts"]
-        
-        # Format Severity column with colors
-        $severityColumn = 2 # Column B (Severity)
-        $alertsRange = $alertsWorksheet.Dimension
-        
-        for ($row = 2; $row -le $alertsRange.End.Row; $row++) {
-            $severity = $alertsWorksheet.Cells[$row, $severityColumn].Text
-            switch ($severity) {
-                "High" { 
-                    $alertsWorksheet.Cells[$row, $severityColumn].Style.Fill.PatternType = [OfficeOpenXml.Style.ExcelFillStyle]::Solid
-                    $alertsWorksheet.Cells[$row, $severityColumn].Style.Fill.BackgroundColor.SetColor([System.Drawing.Color]::Red)
-                    $alertsWorksheet.Cells[$row, $severityColumn].Style.Font.Color.SetColor([System.Drawing.Color]::White)
-                }
-                "Medium" { 
-                    $alertsWorksheet.Cells[$row, $severityColumn].Style.Fill.PatternType = [OfficeOpenXml.Style.ExcelFillStyle]::Solid
-                    $alertsWorksheet.Cells[$row, $severityColumn].Style.Fill.BackgroundColor.SetColor([System.Drawing.Color]::Orange)
-                }
-                "Low" { 
-                    $alertsWorksheet.Cells[$row, $severityColumn].Style.Fill.PatternType = [OfficeOpenXml.Style.ExcelFillStyle]::Solid
-                    $alertsWorksheet.Cells[$row, $severityColumn].Style.Fill.BackgroundColor.SetColor([System.Drawing.Color]::Yellow)
-                }
-                "Good" { 
-                    $alertsWorksheet.Cells[$row, $severityColumn].Style.Fill.PatternType = [OfficeOpenXml.Style.ExcelFillStyle]::Solid
-                    $alertsWorksheet.Cells[$row, $severityColumn].Style.Fill.BackgroundColor.SetColor([System.Drawing.Color]::LightGreen)
-                }
-            }
-        }
-        
-        Close-ExcelPackage $excel
-        
-        Write-Host "✓ Excel report generated successfully: $OutputPath" -ForegroundColor Green
-        Write-Host "File size: $([math]::Round((Get-Item $OutputPath).Length / 1MB, 2)) MB" -ForegroundColor Gray
-        
-        # Display sheet summary
-        $excel = Open-ExcelPackage -Path $OutputPath
-        Write-Host ""
-        Write-Host "=== Excel Report Contents ===" -ForegroundColor Cyan
-        foreach ($worksheet in $excel.Workbook.Worksheets) {
-            $rowCount = if ($worksheet.Dimension) { $worksheet.Dimension.End.Row - 1 } else { 0 }
-            Write-Host "  $($worksheet.Name): $rowCount rows" -ForegroundColor White
-        }
-        Close-ExcelPackage $excel
-        
-        # Auto-open if requested
-        if ($AutoOpen -and (Test-Path $OutputPath)) {
-            if ($IsWindows -ne $false) {
-                Write-Host "Opening Excel report..." -ForegroundColor Green
-                Start-Process $OutputPath
-            }
-            else {
-                Write-Host "Auto-open not supported on this platform" -ForegroundColor Yellow
-            }
-        }
-        
-        return $OutputPath
+
+        Write-Host "✓ By User sheet created" -ForegroundColor Green
+
+        # ==== Raw Data Sheet ====
+
+        $Worksheet = $excel.Workbook.Worksheets.Add('Audit Data')
+        $StartRow = 1
+
+        $excel = $AuditResults | Sort-Object -Property Service,RoleName | `
+                        Export-Excel    -ExcelPackage $excel `
+                                        -WorksheetName $Worksheet.Name `
+                                        -StartRow $StartRow `
+                                        -TableName 'AuditData' `
+                                        -PassThru
+
+        Close-ExcelPackage -ExcelPackage $excel
     }
     catch {
         Write-Error "Failed to generate Excel report: $($_.Exception.Message)"
         Write-Error "Stack trace: $($_.ScriptStackTrace)"
+        throw $_
+        # Cleanup on error
+        if (Test-Path $OutputPath) {
+            try {
+                Remove-Item $OutputPath -Force -ErrorAction SilentlyContinue
+            }
+            catch {
+                Write-Warning "Could not clean up partial file: $OutputPath"
+            }
+        }
+        
         return $null
     }
 }

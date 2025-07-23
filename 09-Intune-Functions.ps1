@@ -243,17 +243,32 @@ function Get-IntuneRoleAudit {
             }
         }
         
+        # Enhanced Get-IntuneRoleAudit function with workaround for missing roleDefinition references
+        # Replace the Intune RBAC section with this improved version
+
         # Get Intune RBAC role definitions (ADMINISTRATIVE ROLES ONLY)
         Write-Host "Retrieving Intune RBAC administrative role definitions..." -ForegroundColor Cyan
         try {
             $intuneRBACRoleDefinitions = Invoke-MgGraphRequest -Uri "https://graph.microsoft.com/v1.0/deviceManagement/roleDefinitions" -Method GET
             Write-Host "Found $($intuneRBACRoleDefinitions.value.Count) Intune role definitions" -ForegroundColor Green
+            
+            # Create lookup hashtables for faster role definition lookups
+            $roleDefinitionLookup = @{}
+            $roleNameToIdLookup = @{}
+            
+            foreach ($roleDef in $intuneRBACRoleDefinitions.value) {
+                $roleDefinitionLookup[$roleDef.id] = $roleDef
+                $roleNameToIdLookup[$roleDef.displayName] = $roleDef.id
+                Write-Verbose "Added role to lookup: $($roleDef.displayName) (ID: $($roleDef.id))"
+            }
+            
+            Write-Host "Role definitions loaded into lookup tables" -ForegroundColor Green
         }
         catch {
             Write-Warning "Could not retrieve Intune role definitions: $($_.Exception.Message)"
             throw "Certificate authentication may lack required permissions"
         }
-        
+
         # Get Intune RBAC role assignments (ADMINISTRATIVE ASSIGNMENTS ONLY)
         Write-Host "Retrieving Intune RBAC administrative role assignments..." -ForegroundColor Cyan
         try {
@@ -262,24 +277,130 @@ function Get-IntuneRoleAudit {
             
             foreach ($assignment in $intuneRoleAssignments.value) {
                 try {
-                    # Get role definition details
-                    $roleDefinition = $intuneRBACRoleDefinitions.value | Where-Object { $_.id -eq $assignment.roleDefinition.id }
-                    if (-not $roleDefinition) {
-                        # Fetch individual role definition if not found in bulk list
-                        try {
-                            $roleDefResponse = Invoke-MgGraphRequest -Uri "https://graph.microsoft.com/v1.0/deviceManagement/roleDefinitions/$($assignment.roleDefinition.id)" -Method GET
-                            $roleDefinition = $roleDefResponse
-                        }
-                        catch {
-                            Write-Verbose "Could not retrieve role definition for ID: $($assignment.roleDefinition.id)"
-                            continue
+                    Write-Verbose "Processing assignment ID: $($assignment.id)"
+                    Write-Verbose "Assignment displayName: $($assignment.displayName)"
+                    
+                    # ENHANCED ROLE DEFINITION RESOLUTION with multiple fallback strategies
+                    $roleDefinition = $null
+                    $roleResolutionMethod = "Unknown"
+                    
+                    # Method 1: Try standard roleDefinition.id property
+                    if ($assignment.roleDefinition -and $assignment.roleDefinition.id) {
+                        $roleDefinitionId = $assignment.roleDefinition.id
+                        $roleDefinition = $roleDefinitionLookup[$roleDefinitionId]
+                        $roleResolutionMethod = "Standard roleDefinition.id"
+                        Write-Verbose "Method 1 - Found role via roleDefinition.id: $roleDefinitionId"
+                    }
+                    
+                    # Method 2: Try direct roleDefinitionId property
+                    elseif ($assignment.roleDefinitionId) {
+                        $roleDefinitionId = $assignment.roleDefinitionId
+                        $roleDefinition = $roleDefinitionLookup[$roleDefinitionId]
+                        $roleResolutionMethod = "Direct roleDefinitionId"
+                        Write-Verbose "Method 2 - Found role via roleDefinitionId: $roleDefinitionId"
+                    }
+                    
+                    # Method 3: Try @odata.id extraction
+                    elseif ($assignment.roleDefinition -and $assignment.roleDefinition.'@odata.id') {
+                        $odataId = $assignment.roleDefinition.'@odata.id'
+                        if ($odataId -match "/roleDefinitions/([^/]+)") {
+                            $roleDefinitionId = $matches[1]
+                            $roleDefinition = $roleDefinitionLookup[$roleDefinitionId]
+                            $roleResolutionMethod = "@odata.id extraction"
+                            Write-Verbose "Method 3 - Found role via @odata.id: $roleDefinitionId"
                         }
                     }
                     
-                    # Process each member in the assignment (ADMINISTRATIVE ROLE HOLDERS ONLY)
+                    # Method 4: WORKAROUND - Try to match by assignment displayName
+                    elseif ($assignment.displayName) {
+                        Write-Verbose "Method 4 - Attempting displayName matching for: $($assignment.displayName)"
+                        
+                        # Try exact match first
+                        if ($roleNameToIdLookup.ContainsKey($assignment.displayName)) {
+                            $roleDefinitionId = $roleNameToIdLookup[$assignment.displayName]
+                            $roleDefinition = $roleDefinitionLookup[$roleDefinitionId]
+                            $roleResolutionMethod = "Exact displayName match"
+                            Write-Verbose "Method 4a - Exact match found: $($assignment.displayName) -> $roleDefinitionId"
+                        }
+                        else {
+                            # Try to find partial matches (remove common prefixes/suffixes)
+                            $cleanDisplayName = $assignment.displayName -replace "^Intune\s+", "" -replace "\s+\(Group\)$", ""
+                            
+                            if ($roleNameToIdLookup.ContainsKey($cleanDisplayName)) {
+                                $roleDefinitionId = $roleNameToIdLookup[$cleanDisplayName]
+                                $roleDefinition = $roleDefinitionLookup[$roleDefinitionId]
+                                $roleResolutionMethod = "Cleaned displayName match ($cleanDisplayName)"
+                                Write-Verbose "Method 4b - Cleaned match found: $cleanDisplayName -> $roleDefinitionId"
+                            }
+                            else {
+                                # Try fuzzy matching by looking for roles that contain key words
+                                $possibleMatches = $roleNameToIdLookup.Keys | Where-Object { 
+                                    $_ -like "*$($cleanDisplayName.Split(' ')[0])*" -or
+                                    $cleanDisplayName -like "*$($_.Split(' ')[0])*"
+                                }
+                                
+                                if ($possibleMatches.Count -eq 1) {
+                                    $matchedRoleName = $possibleMatches[0]
+                                    $roleDefinitionId = $roleNameToIdLookup[$matchedRoleName]
+                                    $roleDefinition = $roleDefinitionLookup[$roleDefinitionId]
+                                    $roleResolutionMethod = "Fuzzy match: $matchedRoleName"
+                                    Write-Verbose "Method 4c - Fuzzy match found: $matchedRoleName -> $roleDefinitionId"
+                                }
+                                elseif ($possibleMatches.Count -gt 1) {
+                                    Write-Verbose "Method 4c - Multiple fuzzy matches found: $($possibleMatches -join ', ')"
+                                }
+                            }
+                        }
+                    }
+                    
+                    # Method 5: Try individual API fetch (last resort)
+                    if (-not $roleDefinition -and $assignment.roleDefinition) {
+                        try {
+                            Write-Verbose "Method 5 - Attempting individual role definition fetch..."
+                            if ($assignment.roleDefinition.id) {
+                                $roleDefResponse = Invoke-MgGraphRequest -Uri "https://graph.microsoft.com/v1.0/deviceManagement/roleDefinitions/$($assignment.roleDefinition.id)" -Method GET -ErrorAction SilentlyContinue
+                                $roleDefinition = $roleDefResponse
+                                $roleResolutionMethod = "Individual API fetch"
+                                Write-Verbose "Method 5 - Successfully fetched: $($roleDefinition.displayName)"
+                            }
+                        }
+                        catch {
+                            Write-Verbose "Method 5 failed: $($_.Exception.Message)"
+                        }
+                    }
+                    
+                    # If we still can't resolve the role definition, create a warning but continue
+                    if (-not $roleDefinition) {
+                        Write-Warning "Could not resolve role definition for assignment ID: $($assignment.id)"
+                        Write-Verbose "Assignment displayName: $($assignment.displayName)"
+                        Write-Verbose "Available methods tried: Standard, Direct, @odata, DisplayName matching, Individual fetch"
+                        Write-Verbose "Available role names: $($roleNameToIdLookup.Keys -join ', ')"
+                        
+                        # Create a placeholder role definition so we don't lose the assignment data
+                        $roleDefinition = [PSCustomObject]@{
+                            id = "Unknown"
+                            displayName = if ($assignment.displayName) { 
+                                "$($assignment.displayName) (Unresolved)" 
+                            } else { 
+                                "Unknown Role (Assignment: $($assignment.id))" 
+                            }
+                            description = "Role definition could not be resolved - assignment reference may be missing"
+                            isBuiltIn = $null
+                        }
+                        $roleResolutionMethod = "Placeholder (unresolved)"
+                    }
+                    
+                    Write-Verbose "Role resolution result: $($roleDefinition.displayName) via $roleResolutionMethod"
+                    
+                    # Process each member in the assignment
+                    if (-not $assignment.members -or $assignment.members.Count -eq 0) {
+                        Write-Verbose "Assignment $($assignment.id) has no members"
+                        continue
+                    }
+                    
                     foreach ($member in $assignment.members) {
                         try {
-                            # Try to get user details
+                            # Resolve member details (user, group, or service principal)
                             $user = $null
                             $userDisplayName = "Unknown"
                             $userPrincipalName = "Unknown"
@@ -287,7 +408,7 @@ function Get-IntuneRoleAudit {
                             $lastSignIn = $null
                             $principalType = "Unknown"
                             
-                            # Member could be a user, group, or service principal
+                            # Try as user first
                             try {
                                 $user = Get-MgUser -UserId $member -ErrorAction SilentlyContinue
                                 if ($user) {
@@ -296,42 +417,61 @@ function Get-IntuneRoleAudit {
                                     $userEnabled = $user.AccountEnabled
                                     $lastSignIn = $user.SignInActivity.LastSignInDateTime
                                     $principalType = "User"
+                                    Write-Verbose "Resolved as user: $userPrincipalName"
                                 }
-                                else {
-                                    # Try as group
+                            }
+                            catch {
+                                Write-Verbose "Not a user: $($_.Exception.Message)"
+                            }
+                            
+                            # Try as group if not a user
+                            if (-not $user) {
+                                try {
                                     $group = Get-MgGroup -GroupId $member -ErrorAction SilentlyContinue
                                     if ($group) {
                                         $userDisplayName = $group.DisplayName + " (Group)"
                                         $userPrincipalName = $group.Mail
                                         $principalType = "Group"
-                                    }
-                                    else {
-                                        # Try as service principal
-                                        $sp = Get-MgServicePrincipal -ServicePrincipalId $member -ErrorAction SilentlyContinue
-                                        if ($sp) {
-                                            $userDisplayName = $sp.DisplayName + " (Service Principal)"
-                                            $userPrincipalName = $sp.AppId
-                                            $principalType = "ServicePrincipal"
-                                        }
+                                        Write-Verbose "Resolved as group: $($group.DisplayName)"
                                     }
                                 }
-                            }
-                            catch {
-                                Write-Verbose "Could not resolve member: $member"
-                                $userDisplayName = $member
-                                $userPrincipalName = $member
-                                $principalType = "Unknown"
+                                catch {
+                                    Write-Verbose "Not a group: $($_.Exception.Message)"
+                                }
                             }
                             
-                            # Get scope information (administrative scope only)
+                            # Try as service principal if still not resolved
+                            if (-not $user -and $principalType -eq "Unknown") {
+                                try {
+                                    $sp = Get-MgServicePrincipal -ServicePrincipalId $member -ErrorAction SilentlyContinue
+                                    if ($sp) {
+                                        $userDisplayName = $sp.DisplayName + " (Service Principal)"
+                                        $userPrincipalName = $sp.AppId
+                                        $principalType = "ServicePrincipal"
+                                        Write-Verbose "Resolved as service principal: $($sp.DisplayName)"
+                                    }
+                                }
+                                catch {
+                                    Write-Verbose "Not a service principal: $($_.Exception.Message)"
+                                }
+                            }
+                            
+                            # If still not resolved, use the member ID
+                            if ($principalType -eq "Unknown") {
+                                $userDisplayName = "Unresolved Principal"
+                                $userPrincipalName = $member
+                                $principalType = "Unknown"
+                                Write-Verbose "Could not resolve principal: $member"
+                            }
+                            
+                            # Get scope information
                             $scopeInfo = "Organization"
                             $scopeDetails = @()
                             
                             if ($assignment.resourceScopes -and $assignment.resourceScopes.Count -gt 0) {
                                 foreach ($scopeId in $assignment.resourceScopes) {
                                     try {
-                                        # Try to get scope details - could be group or other resource
-                                        if ($scopeId -eq "/") {
+                                        if ($scopeId -eq "/" -or $scopeId -eq "") {
                                             $scopeDetails += "Root"
                                         }
                                         else {
@@ -352,7 +492,7 @@ function Get-IntuneRoleAudit {
                                 $scopeInfo = $scopeDetails -join ", "
                             }
                             
-                            # Check if this is a time-bound assignment
+                            # Check for time-bound assignments
                             $assignmentType = "Intune RBAC"
                             $pimEndDateTime = $null
                             $pimStartDateTime = $null
@@ -363,6 +503,7 @@ function Get-IntuneRoleAudit {
                                 $pimStartDateTime = $assignment.scheduleInfo.startDateTime
                             }
                             
+                            # Create the result object with enhanced information
                             $results += [PSCustomObject]@{
                                 Service = "Microsoft Intune"
                                 UserPrincipalName = $userPrincipalName
@@ -370,7 +511,7 @@ function Get-IntuneRoleAudit {
                                 UserId = $member
                                 RoleName = $roleDefinition.displayName
                                 RoleDefinitionId = $roleDefinition.id
-                                RoleScope = "Service-Specific"  # All Intune RBAC roles are service-specific
+                                RoleScope = "Service-Specific"
                                 AssignmentType = $assignmentType
                                 AssignedDateTime = $assignment.createdDateTime
                                 UserEnabled = $userEnabled
@@ -384,15 +525,19 @@ function Get-IntuneRoleAudit {
                                 PIMStartDateTime = $pimStartDateTime
                                 AuthenticationType = "Certificate"
                                 PrincipalType = $principalType
+                                RoleResolutionMethod = $roleResolutionMethod  # New field for debugging
+                                AssignmentDisplayName = $assignment.displayName  # New field for reference
                             }
+                            
+                            Write-Verbose "Successfully processed member $userDisplayName for role $($roleDefinition.displayName) via $roleResolutionMethod"
                         }
                         catch {
-                            Write-Verbose "Error processing assignment member: $($_.Exception.Message)"
+                            Write-Warning "Error processing assignment member $member`: $($_.Exception.Message)"
                         }
                     }
                 }
                 catch {
-                    Write-Verbose "Error processing Intune role assignment: $($_.Exception.Message)"
+                    Write-Warning "Error processing Intune role assignment $($assignment.id)`: $($_.Exception.Message)"
                     continue
                 }
             }
@@ -400,9 +545,9 @@ function Get-IntuneRoleAudit {
         catch {
             Write-Warning "Could not retrieve Intune administrative role assignments: $($_.Exception.Message)"
         }
-        
+
         Write-Host "✓ Intune administrative role audit completed. Found $($results.Count) administrative role assignments (including PIM)" -ForegroundColor Green
-        
+              
         # Provide feedback about role filtering
         if (-not $IncludeAzureADRoles) {
             Write-Host "  (Excluding overarching Azure AD roles - use -IncludeAzureADRoles to include)" -ForegroundColor Yellow

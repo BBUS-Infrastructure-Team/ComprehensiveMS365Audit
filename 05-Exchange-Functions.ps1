@@ -31,12 +31,12 @@ function Get-ExchangeRoleAudit {
             Write-Host "• Run: Set-M365AuditCertCredentials -TenantId <id> -ClientId <id> -CertificateThumbprint <thumbprint>" -ForegroundColor White
             return $results
         }
-        
+        <#
         Write-Host "Using configured certificate credentials for Exchange audit:" -ForegroundColor Cyan
         Write-Host "  Tenant ID: $($script:AppConfig.TenantId)" -ForegroundColor Gray
         Write-Host "  Client ID: $($script:AppConfig.ClientId)" -ForegroundColor Gray
         Write-Host "  Certificate Thumbprint: $($script:AppConfig.CertificateThumbprint)" -ForegroundColor Gray
-        
+        #>
         # === STEP 1: Get Exchange-related Azure AD roles via Graph ===
         Write-Host "Retrieving Exchange-related Azure AD roles via Graph..." -ForegroundColor Cyan
         
