@@ -104,62 +104,81 @@ function Get-SharePointRoleAudit {
             $sharePointSpecificRoles
         }
         
+        # FIX 1: Add -All parameter to get ALL role definitions
         try {
-            $roleDefinitions = Get-MgRoleManagementDirectoryRoleDefinition | Where-Object { $_.DisplayName -in $rolesToInclude }
+            $roleDefinitions = Get-MgRoleManagementDirectoryRoleDefinition -All | Where-Object { $_.DisplayName -in $rolesToInclude }
             Write-Host "Found $($roleDefinitions.Count) SharePoint-related administrative role definitions" -ForegroundColor Green
+
+            $allAssignments = Get-RoleAssignmentsForService -RoleDefinitions $roleDefinitions -ServiceName "SharePoint" -IncludePIM
+
+<#             
+            # FIX 2: Get ALL assignment types (Active, PIM Eligible, PIM Active)
+            Write-Host "Retrieving all SharePoint assignment types..." -ForegroundColor Cyan
             
-            # Get ALL assignment types (regular + PIM eligible + PIM active)
-            $allAssignments = @()
+            # Get active assignments (permanent)
+            Write-Host "Getting active SharePoint assignments..." -ForegroundColor Gray
+
+            $activeAssignments = @()
+            foreach ($roleId in $roleDefinitions.Id) {
+                $assignments = Get-MgRoleManagementDirectoryRoleAssignment -Filter "roleDefinitionId eq '$roleId'" -ErrorAction SilentlyContinue
+                if ($assignments) {
+                    $activeAssignments += $assignments
+                }
+            }
             
-            # Regular assignments
-            $regularAssignments = Get-MgRoleManagementDirectoryRoleAssignment | Where-Object { $_.RoleDefinitionId -in $roleDefinitions.Id }
-            if ($regularAssignments) { $allAssignments += $regularAssignments }
-            Write-Host "Found $($regularAssignments.Count) regular SharePoint administrative role assignments" -ForegroundColor Gray
+            Write-Host "Found $($activeAssignments.Count) active assignments" -ForegroundColor Green
             
-            # PIM eligible assignments
+            # Get PIM eligible assignments
+            $pimEligibleAssignments = @()
             try {
+                Write-Host "Getting PIM eligible SharePoint assignments..." -ForegroundColor Gray
                 foreach ($roleId in $roleDefinitions.Id) {
                     $pimEligible = Get-MgRoleManagementDirectoryRoleEligibilitySchedule -Filter "roleDefinitionId eq '$roleId'" -ErrorAction SilentlyContinue
                     if ($pimEligible) {
-                        $allAssignments += $pimEligible
+                        $pimEligibleAssignments += $pimEligible
                     }
                 }
-                $pimEligibleCount = ($allAssignments | Where-Object { $_.PSObject.TypeNames -contains "Microsoft.Graph.PowerShell.Models.MicrosoftGraphUnifiedRoleEligibilitySchedule" }).Count
-                Write-Host "Found $pimEligibleCount PIM eligible SharePoint administrative assignments" -ForegroundColor Gray
+                Write-Host "Found $($pimEligibleAssignments.Count) PIM eligible assignments" -ForegroundColor Green
             }
             catch {
-                Write-Verbose "Could not retrieve PIM eligible assignments: $($_.Exception.Message)"
+                Write-Host "Could not retrieve PIM eligible assignments (may not be licensed)" -ForegroundColor Yellow
             }
             
-            # PIM active assignments
+            # Get PIM active assignments
+            $pimActiveAssignments = @()
             try {
+                Write-Host "Getting PIM active SharePoint assignments..." -ForegroundColor Gray
                 foreach ($roleId in $roleDefinitions.Id) {
                     $pimActive = Get-MgRoleManagementDirectoryRoleAssignmentSchedule -Filter "roleDefinitionId eq '$roleId'" -ErrorAction SilentlyContinue
                     if ($pimActive) {
-                        $allAssignments += $pimActive
+                        $pimActiveAssignments += $pimActive
                     }
                 }
-                $pimActiveCount = ($allAssignments | Where-Object { $_.PSObject.TypeNames -contains "Microsoft.Graph.PowerShell.Models.MicrosoftGraphUnifiedRoleAssignmentSchedule" }).Count
-                Write-Host "Found $pimActiveCount PIM active SharePoint administrative assignments" -ForegroundColor Gray
+                Write-Host "Found $($pimActiveAssignments.Count) PIM active assignments" -ForegroundColor Green
             }
             catch {
-                Write-Verbose "Could not retrieve PIM active assignments: $($_.Exception.Message)"
+                Write-Host "Could not retrieve PIM active assignments (may not be licensed)" -ForegroundColor Yellow
             }
             
-            Write-Host "Total SharePoint administrative assignments to process: $($allAssignments.Count)" -ForegroundColor Green
+            # Combine all assignments for processing
+            $allAssignments = @()
+            $allAssignments += $activeAssignments | ForEach-Object { $_ | Add-Member -NotePropertyName "AssignmentSource" -NotePropertyValue "Active" -PassThru }
+            $allAssignments += $pimEligibleAssignments | ForEach-Object { $_ | Add-Member -NotePropertyName "AssignmentSource" -NotePropertyValue "PIMEligible" -PassThru }
+            $allAssignments += $pimActiveAssignments | ForEach-Object { $_ | Add-Member -NotePropertyName "AssignmentSource" -NotePropertyValue "PIMActive" -PassThru }
+            
+ #>            Write-Host "Total SharePoint administrative assignments to process: $($allAssignments.Count)" -ForegroundColor Green
             
             # Process all assignments
             foreach ($assignment in $allAssignments) {
                 try {
                     $role = $roleDefinitions | Where-Object { $_.Id -eq $assignment.RoleDefinitionId }
                     
-                    # Determine assignment type
-                    $assignmentType = "Active"
-                    if ($assignment.PSObject.TypeNames -contains "Microsoft.Graph.PowerShell.Models.MicrosoftGraphUnifiedRoleEligibilitySchedule") {
-                        $assignmentType = "Eligible (PIM)"
-                    } 
-                    elseif ($assignment.PSObject.TypeNames -contains "Microsoft.Graph.PowerShell.Models.MicrosoftGraphUnifiedRoleAssignmentSchedule") {
-                        $assignmentType = "Active (PIM)"
+                    # Determine assignment type based on source
+                    $assignmentType = switch ($assignment.AssignmentSource) {
+                        "Active" { "Active" }
+                        "PIMEligible" { "Eligible (PIM)" }
+                        "PIMActive" { "Active (PIM)" }
+                        default { "Active" }
                     }
                     
                     # Resolve principal (users, groups, service principals)
@@ -168,18 +187,18 @@ function Get-SharePointRoleAudit {
                         DisplayName = "Unknown"
                         UserId = $assignment.PrincipalId
                         UserEnabled = $null
-                        LastSignIn = $null
+                        OnPremisesSyncEnabled = $null
                         PrincipalType = "Unknown"
                     }
                     
                     # Try as user
                     try {
-                        $user = Get-MgUser -UserId $assignment.PrincipalId -ErrorAction SilentlyContinue
+                        $user = Get-MgUser -UserId $assignment.PrincipalId -Property "UserPrincipalName,DisplayName,AccountEnabled,OnPremisesSyncEnabled" -ErrorAction SilentlyContinue
                         if ($user) {
                             $principalInfo.UserPrincipalName = $user.UserPrincipalName
                             $principalInfo.DisplayName = $user.DisplayName
                             $principalInfo.UserEnabled = $user.AccountEnabled
-                            $principalInfo.LastSignIn = $user.SignInActivity.LastSignInDateTime
+                            $principalInfo.OnPremisesSyncEnabled = $user.OnPremisesSyncEnabled
                             $principalInfo.PrincipalType = "User"
                         }
                     }
@@ -188,7 +207,7 @@ function Get-SharePointRoleAudit {
                     # Try as service principal if not user
                     if ($principalInfo.PrincipalType -eq "Unknown") {
                         try {
-                            $app = Get-MgServicePrincipal -ServicePrincipalId $assignment.PrincipalId -ErrorAction SilentlyContinue
+                            $app = Get-MgServicePrincipal -ServicePrincipalId $assignment.PrincipalId -Property "AppId,DisplayName,AccountEnabled" -ErrorAction SilentlyContinue
                             if ($app) {
                                 $principalInfo.UserPrincipalName = $app.AppId
                                 $principalInfo.DisplayName = "$($app.DisplayName) (Application)"
@@ -202,7 +221,7 @@ function Get-SharePointRoleAudit {
                     # Try as group if still unknown
                     if ($principalInfo.PrincipalType -eq "Unknown") {
                         try {
-                            $group = Get-MgGroup -GroupId $assignment.PrincipalId -ErrorAction SilentlyContinue
+                            $group = Get-MgGroup -GroupId $assignment.PrincipalId -Property "Mail,DisplayName" -ErrorAction SilentlyContinue
                             if ($group) {
                                 $principalInfo.UserPrincipalName = $group.Mail
                                 $principalInfo.DisplayName = "$($group.DisplayName) (Group)"
@@ -226,12 +245,13 @@ function Get-SharePointRoleAudit {
                         AssignmentType = $assignmentType
                         AssignedDateTime = $assignment.CreatedDateTime
                         UserEnabled = $principalInfo.UserEnabled
-                        LastSignIn = $principalInfo.LastSignIn
+                        #LastSignIn = $principalInfo.LastSignIn
                         Scope = $assignment.DirectoryScopeId
                         AssignmentId = $assignment.Id
-                        AuthenticationType = "Certificate"
+                        #AuthenticationType = "Certificate"
                         PrincipalType = $principalInfo.PrincipalType
                         RoleType = "AzureAD"
+                        OnPremisesSyncEnabled = $principalInfo.OnPremisesSyncEnabled
                         PIMStartDateTime = $assignment.ScheduleInfo.StartDateTime
                         PIMEndDateTime = $assignment.ScheduleInfo.Expiration.EndDateTime
                     }
@@ -291,14 +311,14 @@ function Get-SharePointRoleAudit {
                         AssignmentType = "Active"
                         AssignedDateTime = $null
                         UserEnabled = $null
-                        LastSignIn = $null
+                        #LastSignIn = $null
                         Scope = "Tenant App Catalog"
                         AssignmentId = $null
-                        AuthenticationType = "Certificate"
+                        #AuthenticationType = "Certificate"
                         PrincipalType = "User"
                         RoleType = "SharePointSpecific"
-                        SiteTitle = "Tenant App Catalog"
-                        Template = "APPCATALOG#0"
+                        PIMStartDateTime = $null
+                        PIMEndDateTime = $null
                     }
                 }
                 Write-Host "Found $($appCatalogAdmins.Count) Tenant App Catalog administrators" -ForegroundColor Gray

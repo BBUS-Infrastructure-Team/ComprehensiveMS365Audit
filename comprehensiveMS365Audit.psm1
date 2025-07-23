@@ -2,7 +2,6 @@
 Get-ChildItem -Path "$PSScriptRoot" -Filter "*.ps1" | ForEach-Object {
     . "$($_.FullName)"
 }
-. "$PSScriptRoot/Testing_and_Examples/test.ps1"
 
 Export-ModuleMember -Function @(
     'Set-M365AuditCredentials',

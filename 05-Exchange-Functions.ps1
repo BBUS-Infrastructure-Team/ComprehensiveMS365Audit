@@ -82,14 +82,18 @@ function Get-ExchangeRoleAudit {
             $exchangeSpecificRoles
         }
         
-        $roleDefinitions = Get-MgRoleManagementDirectoryRoleDefinition | Where-Object { $_.DisplayName -in $rolesToInclude }
+        $roleDefinitions = Get-MgRoleManagementDirectoryRoleDefinition -All | Where-Object { $_.DisplayName -in $rolesToInclude }
         Write-Host "Found $($roleDefinitions.Count) Exchange-related role definitions in Azure AD" -ForegroundColor Green
         
+        $allAssignments = Get-RoleAssignmentsForService -RoleDefinitions $roleDefinitions -ServiceName "Exchange" -IncludePIM
+
+<# 
         # Get ALL assignment types (regular + PIM eligible + PIM active)
         $allAssignments = @()
         
         # Regular assignments
         $regularAssignments = Get-MgRoleManagementDirectoryRoleAssignment | Where-Object { $_.RoleDefinitionId -in $roleDefinitions.Id }
+        
         if ($regularAssignments) { $allAssignments += $regularAssignments }
         Write-Host "Found $($regularAssignments.Count) regular Exchange role assignments" -ForegroundColor Gray
         
@@ -125,7 +129,7 @@ function Get-ExchangeRoleAudit {
         }
         Write-Host "Found $pimActiveCount PIM active Exchange assignments" -ForegroundColor $(if($pimActiveCount -gt 0) {"Green"} else {"Gray"})
         
-        # Process Azure AD assignments
+ #>        # Process Azure AD assignments
         foreach ($assignment in $allAssignments) {
             try {
                 $role = $roleDefinitions | Where-Object { $_.Id -eq $assignment.RoleDefinitionId }
@@ -145,7 +149,7 @@ function Get-ExchangeRoleAudit {
                     DisplayName = "Unknown"
                     UserId = $assignment.PrincipalId
                     UserEnabled = $null
-                    LastSignIn = $null
+                    #LastSignIn = $null
                     PrincipalType = "Unknown"
                     OnPremisesSyncEnabled = $null
                     GroupMemberCount = $null
@@ -153,12 +157,11 @@ function Get-ExchangeRoleAudit {
                 
                 # Try as user first
                 try {
-                    $user = Get-MgUser -UserId $assignment.PrincipalId -Property "UserPrincipalName,DisplayName,AccountEnabled,SignInActivity,OnPremisesSyncEnabled" -ErrorAction SilentlyContinue
+                    $user = Get-MgUser -UserId $assignment.PrincipalId -Property "UserPrincipalName,DisplayName,AccountEnabled,OnPremisesSyncEnabled" -ErrorAction SilentlyContinue
                     if ($user) {
                         $principalInfo.UserPrincipalName = $user.UserPrincipalName
                         $principalInfo.DisplayName = $user.DisplayName
                         $principalInfo.UserEnabled = $user.AccountEnabled
-                        $principalInfo.LastSignIn = $user.SignInActivity.LastSignInDateTime
                         $principalInfo.PrincipalType = "User"
                         $principalInfo.OnPremisesSyncEnabled = $user.OnPremisesSyncEnabled
                     }
@@ -208,21 +211,23 @@ function Get-ExchangeRoleAudit {
                         AssignmentType = $assignmentType
                         AssignedDateTime = $assignment.CreatedDateTime
                         UserEnabled = $principalInfo.UserEnabled
-                        LastSignIn = $principalInfo.LastSignIn
+                        #LastSignIn = $principalInfo.LastSignIn
                         Scope = $assignment.DirectoryScopeId
                         AssignmentId = $assignment.Id
                         AuthenticationType = "Certificate"
                         PrincipalType = $principalInfo.PrincipalType
-                        RoleSource = "AzureAD"
+                        #RoleSource = "AzureAD"
+                        OnPremisesSyncEnabled = $principalInfo.OnPremisesSyncEnabled
                         PIMStartDateTime = $assignment.ScheduleInfo.StartDateTime
                         PIMEndDateTime = $assignment.ScheduleInfo.Expiration.EndDateTime
-                        OnPremisesSyncEnabled = $principalInfo.OnPremisesSyncEnabled
-                        GroupMemberCount = $principalInfo.GroupMemberCount
+                        
+                        # GroupMemberCount = $principalInfo.GroupMemberCount
                         # Additional fields for consistency
-                        RoleGroupDescription = $null
-                        OrganizationalUnit = $null
-                        ManagementScope = $null
-                        RecipientType = $null
+                        # RoleGroupDescription = $null
+                        # OrganizationalUnit = $null
+                        # ManagementScope = $null
+                        # RecipientType = $null
+
                     }
                 }
             }
@@ -319,15 +324,15 @@ function Get-ExchangeRoleAudit {
                         
                         # Try to get additional user info from Graph for consistency
                         $userEnabled = $null
-                        $lastSignIn = $null
+                        #$lastSignIn = $null
                         $onPremisesSyncEnabled = $null
 
                         if ($isUser -and $member.ExternalDirectoryObjectId) {
                             try {
-                                $graphUser = Get-MgUser -UserId $member.ExternalDirectoryObjectId -Property "AccountEnabled,SignInActivity,OnPremisesSyncEnabled,OnPremisesDistinguishedName" -ErrorAction SilentlyContinue
+                                $graphUser = Get-MgUser -UserId $member.ExternalDirectoryObjectId  -Property "UserPrincipalName,DisplayName,AccountEnabled,OnPremisesSyncEnabled" -ErrorAction SilentlyContinue
                                 if ($graphUser) {
                                     $userEnabled = $graphUser.AccountEnabled
-                                    $lastSignIn = $graphUser.SignInActivity.LastSignInDateTime
+                                    #$lastSignIn = $graphUser.SignInActivity.LastSignInDateTime
                                     $onPremisesSyncEnabled = $graphUser.OnPremisesSyncEnabled
                                     
                                     # Debug output to verify hybrid detection
@@ -350,19 +355,19 @@ function Get-ExchangeRoleAudit {
                             AssignmentType = "Role Group Member"
                             AssignedDateTime = $null
                             UserEnabled = $userEnabled
-                            LastSignIn = $lastSignIn
+                            #LastSignIn = $lastSignIn
                             Scope = "Organization"
                             AssignmentId = $group.Identity
                             AuthenticationType = "Certificate"
                             PrincipalType = $principalType
-                            RoleSource = "ExchangeOnline"
-                            # Exchange-specific fields for consistency
-                            RoleGroupDescription = $group.Description
-                            RecipientType = $member.RecipientType
-                            OrganizationalUnit = $null
-                            ManagementScope = $null
+                            # RoleSource = "ExchangeOnline"
+                            # # Exchange-specific fields for consistency
+                            # RoleGroupDescription = $group.Description
+                            # RecipientType = $member.RecipientType
+                            # OrganizationalUnit = $null
+                            # ManagementScope = $null
                             OnPremisesSyncEnabled = $onPremisesSyncEnabled
-                            GroupMemberCount = if ($isGroup) { "See Group Details" } else { $null }
+                            # GroupMemberCount = if ($isGroup) { "See Group Details" } else { $null }
                             # Additional fields for consistency
                             PIMStartDateTime = $null
                             PIMEndDateTime = $null
@@ -401,19 +406,19 @@ function Get-ExchangeRoleAudit {
                         AssignmentType = "Direct Assignment"
                         AssignedDateTime = $assignment.WhenCreated
                         UserEnabled = $null
-                        LastSignIn = $null
+                        # LastSignIn = $null
                         Scope = $assignment.RecipientOrganizationUnitScope
                         AssignmentId = $assignment.Identity
                         AuthenticationType = "Certificate"
                         PrincipalType = $principalType
-                        RoleSource = "ExchangeOnline"
-                        # Exchange-specific fields for consistency
-                        RoleGroupDescription = $null
-                        OrganizationalUnit = $assignment.RecipientOrganizationUnitScope
-                        ManagementScope = $assignment.CustomRecipientWriteScope
-                        RecipientType = "DirectAssignment"
+                        # RoleSource = "ExchangeOnline"
+                        # # Exchange-specific fields for consistency
+                        # RoleGroupDescription = $null
+                        # OrganizationalUnit = $assignment.RecipientOrganizationUnitScope
+                        # ManagementScope = $assignment.CustomRecipientWriteScope
+                        # RecipientType = "DirectAssignment"
                         OnPremisesSyncEnabled = $null
-                        GroupMemberCount = $null
+                        # GroupMemberCount = $null
                         # Additional fields for consistency
                         PIMStartDateTime = $null
                         PIMEndDateTime = $null

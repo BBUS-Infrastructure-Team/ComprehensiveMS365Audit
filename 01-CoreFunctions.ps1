@@ -1685,3 +1685,95 @@ function Get-ServicePIMCounts {
         pimEligible = $pimEligible
     }
 }
+
+function Get-RoleAssignmentsForService {
+    param(
+        [Parameter(Mandatory = $true)]
+        [array]$RoleDefinitions,
+        
+        [Parameter(Mandatory = $true)]
+        [string]$ServiceName,
+        
+        [switch]$IncludePIM,
+        [switch]$Quiet
+    )
+    
+    if (-not $Quiet) {
+        Write-Host "Retrieving all $ServiceName assignment types..." -ForegroundColor Cyan
+    }
+    
+    # Get active assignments
+    if (-not $Quiet) {
+        Write-Host "Getting active $ServiceName assignments..." -ForegroundColor Gray
+    }
+    $activeAssignments = @()
+    foreach ($roleId in $RoleDefinitions.Id) {
+        $assignments = Get-MgRoleManagementDirectoryRoleAssignment -Filter "roleDefinitionId eq '$roleId'" -ErrorAction SilentlyContinue
+        if ($assignments) {
+            $activeAssignments += $assignments
+        }
+    }
+    if (-not $Quiet) {
+        Write-Host "Found $($activeAssignments.Count) active assignments" -ForegroundColor Green
+    }
+    
+    # Get PIM eligible assignments
+    $pimEligibleAssignments = @()
+    if ($IncludePIM) {
+        try {
+            if (-not $Quiet) {
+                Write-Host "Getting PIM eligible $ServiceName assignments..." -ForegroundColor Gray
+            }
+            foreach ($roleId in $RoleDefinitions.Id) {
+                $pimEligible = Get-MgRoleManagementDirectoryRoleEligibilitySchedule -Filter "roleDefinitionId eq '$roleId'" -ErrorAction SilentlyContinue
+                if ($pimEligible) {
+                    $pimEligibleAssignments += $pimEligible
+                }
+            }
+            if (-not $Quiet) {
+                Write-Host "Found $($pimEligibleAssignments.Count) PIM eligible assignments" -ForegroundColor Green
+            }
+        }
+        catch {
+            if (-not $Quiet) {
+                Write-Host "Could not retrieve PIM eligible assignments (may not be licensed)" -ForegroundColor Yellow
+            }
+        }
+    }
+    
+    # Get PIM active assignments
+    $pimActiveAssignments = @()
+    if ($IncludePIM) {
+        try {
+            if (-not $Quiet) {
+                Write-Host "Getting PIM active $ServiceName assignments..." -ForegroundColor Gray
+            }
+            foreach ($roleId in $RoleDefinitions.Id) {
+                $pimActive = Get-MgRoleManagementDirectoryRoleAssignmentSchedule -Filter "roleDefinitionId eq '$roleId'" -ErrorAction SilentlyContinue
+                if ($pimActive) {
+                    $pimActiveAssignments += $pimActive
+                }
+            }
+            if (-not $Quiet) {
+                Write-Host "Found $($pimActiveAssignments.Count) PIM active assignments" -ForegroundColor Green
+            }
+        }
+        catch {
+            if (-not $Quiet) {
+                Write-Host "Could not retrieve PIM active assignments (may not be licensed)" -ForegroundColor Yellow
+            }
+        }
+    }
+    
+    # Combine all assignments with source tagging
+    $allAssignments = @()
+    $allAssignments += $activeAssignments | ForEach-Object { $_ | Add-Member -NotePropertyName "AssignmentSource" -NotePropertyValue "Active" -PassThru }
+    $allAssignments += $pimEligibleAssignments | ForEach-Object { $_ | Add-Member -NotePropertyName "AssignmentSource" -NotePropertyValue "PIMEligible" -PassThru }
+    $allAssignments += $pimActiveAssignments | ForEach-Object { $_ | Add-Member -NotePropertyName "AssignmentSource" -NotePropertyValue "PIMActive" -PassThru }
+    
+    if (-not $Quiet) {
+        Write-Host "Total $ServiceName assignments across all types: $($allAssignments.Count)" -ForegroundColor Green
+    }
+    
+    return $allAssignments
+}

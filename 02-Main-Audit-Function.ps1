@@ -3,7 +3,7 @@
 
 function Get-ComprehensiveM365RoleAudit {
     param(
-        [string]$ExportPath = ".\M365_Comprehensive_RoleAudit_$(Get-Date -Format 'yyyyMMdd_HHmmss').csv",
+        [string]$ExportPath,
 
         [Parameter(Mandatory = $true)]
         [string]$SharePointTenantUrl, # Example: "https://balfourbeattyus-admin.sharepoint.com"
@@ -17,9 +17,9 @@ function Get-ComprehensiveM365RoleAudit {
         [switch]$IncludeTeams,
         [switch]$IncludePurview,
         [switch]$IncludeDefender,
-        [switch]$IncludeIntune,
         [switch]$IncludePowerPlatform,
         [switch]$IncludeAll,
+        [switch]$IncludeAnalysis,
 
         # Can be set with Set-M365AuditCredentials
         [string]$TenantId,
@@ -31,7 +31,7 @@ function Get-ComprehensiveM365RoleAudit {
         
         # Deduplication is now optional and not recommended with proper filtering
         [ValidateSet("Strict", "Loose", "ServicePreference", "RoleScoped", "None")]
-        [string]$DeduplicationMode = "None",
+        #[string]$DeduplicationMode = "None",
         [switch]$ShowDuplicatesRemoved,
         [switch]$PreferAzureADSource
     )
@@ -148,16 +148,16 @@ function Get-ComprehensiveM365RoleAudit {
             }
         }
         
-        # Microsoft Intune/Endpoint Manager Roles
-        if ($IncludeIntune -or $IncludeAll) {
-            Write-Host "Auditing Microsoft Intune/Endpoint Manager roles..." -ForegroundColor Cyan
-            $intuneRoles = Get-IntuneRoleAudit -TenantId $TenantId -ClientId $ClientId -CertificateThumbprint $CertificateThumbprint -IncludePIM:$IncludePIM -IncludeAzureADRoles:$IncludeOverarchingRolesInServices
-            $allResults += $intuneRoles
-            Write-Host "✓ Found $($intuneRoles.Count) Intune role assignments" -ForegroundColor Green
-            if (-not $IncludeOverarchingRolesInServices) {
-                Write-Host "  (Excluding overarching Azure AD roles to prevent duplicates)" -ForegroundColor Gray
-            }
-        }
+        # # Microsoft Intune/Endpoint Manager Roles
+        # if ($IncludeIntune -or $IncludeAll) {
+        #     Write-Host "Auditing Microsoft Intune/Endpoint Manager roles..." -ForegroundColor Cyan
+        #     $intuneRoles = Get-IntuneRoleAudit -TenantId $TenantId -ClientId $ClientId -CertificateThumbprint $CertificateThumbprint -IncludePIM:$IncludePIM -IncludeAzureADRoles:$IncludeOverarchingRolesInServices
+        #     $allResults += $intuneRoles
+        #     Write-Host "✓ Found $($intuneRoles.Count) Intune role assignments" -ForegroundColor Green
+        #     if (-not $IncludeOverarchingRolesInServices) {
+        #         Write-Host "  (Excluding overarching Azure AD roles to prevent duplicates)" -ForegroundColor Gray
+        #     }
+        # }
         
         # Power Platform Roles
         if ($IncludePowerPlatform -or $IncludeAll) {
@@ -178,298 +178,304 @@ function Get-ComprehensiveM365RoleAudit {
         }
         
         # === 3. OPTIONAL DEDUPLICATION (NOT RECOMMENDED WITH PROPER FILTERING) ===
-        if ($DeduplicationMode -ne "None" -and $allResults.Count -gt 0) {
-            Write-Host ""
-            Write-Host "=== APPLYING OPTIONAL DEDUPLICATION ===" -ForegroundColor Yellow
-            Write-Host "WARNING: Deduplication should not be needed with proper role filtering!" -ForegroundColor Yellow
-            Write-Host "Consider using -IncludeOverarchingRolesInServices:$false for cleaner results" -ForegroundColor Yellow
+        # if ($DeduplicationMode -ne "None" -and $allResults.Count -gt 0) {
+        #     Write-Host ""
+        #     Write-Host "=== APPLYING OPTIONAL DEDUPLICATION ===" -ForegroundColor Yellow
+        #     Write-Host "WARNING: Deduplication should not be needed with proper role filtering!" -ForegroundColor Yellow
+        #     Write-Host "Consider using -IncludeOverarchingRolesInServices:$false for cleaner results" -ForegroundColor Yellow
             
-            $originalCount = $allResults.Count
+        #     $originalCount = $allResults.Count
             
-            $deduplicationParams = @{
-                AuditResults = $allResults
-                DeduplicationMode = $DeduplicationMode
-                ShowDuplicatesRemoved = $ShowDuplicatesRemoved
-                PreferAzureADSource = $PreferAzureADSource
-            }
+        #     $deduplicationParams = @{
+        #         AuditResults = $allResults
+        #         DeduplicationMode = $DeduplicationMode
+        #         ShowDuplicatesRemoved = $ShowDuplicatesRemoved
+        #         PreferAzureADSource = $PreferAzureADSource
+        #     }
             
-            $allResults = Remove-M365AuditDuplicates @deduplicationParams
+        #     $allResults = Remove-M365AuditDuplicates @deduplicationParams
             
-            $deduplicatedCount = $allResults.Count
-            $removedCount = $originalCount - $deduplicatedCount
+        #     $deduplicatedCount = $allResults.Count
+        #     $removedCount = $originalCount - $deduplicatedCount
             
-            Write-Host ""
-            Write-Host "Deduplication Summary:" -ForegroundColor Yellow
-            Write-Host "  Original: $originalCount assignments" -ForegroundColor White
-            Write-Host "  Final: $deduplicatedCount assignments" -ForegroundColor White
-            Write-Host "  Removed: $removedCount duplicates" -ForegroundColor Yellow
+        #     Write-Host ""
+        #     Write-Host "Deduplication Summary:" -ForegroundColor Yellow
+        #     Write-Host "  Original: $originalCount assignments" -ForegroundColor White
+        #     Write-Host "  Final: $deduplicatedCount assignments" -ForegroundColor White
+        #     Write-Host "  Removed: $removedCount duplicates" -ForegroundColor Yellow
             
-            if ($removedCount -eq 0) {
-                Write-Host "  ✓ No duplicates found - role filtering is working correctly!" -ForegroundColor Green
-            } else {
-                Write-Host "  ⚠️ $removedCount duplicates removed - consider review role filtering settings" -ForegroundColor Yellow
-            }
-        }
+        #     if ($removedCount -eq 0) {
+        #         Write-Host "  ✓ No duplicates found - role filtering is working correctly!" -ForegroundColor Green
+        #     } else {
+        #         Write-Host "  ⚠️ $removedCount duplicates removed - consider review role filtering settings" -ForegroundColor Yellow
+        #     }
+        # }
         
         # === 4. EXPORT AND DISPLAY RESULTS ===
         if ($allResults.Count -gt 0) {
-            $allResults | Export-Csv -Path $ExportPath -NoTypeInformation
+            if ($ExportPath) {
+                # $allResults | Export-Csv -Path $ExportPath -NoTypeInformation
+            }
+            ""
             Write-Host ""
             Write-Host "=== AUDIT COMPLETED SUCCESSFULLY ===" -ForegroundColor Green
             Write-Host "Total role assignments found: $($allResults.Count)" -ForegroundColor Green
             
-            if ($DeduplicationMode -ne "None") {
-                Write-Host "Deduplication applied: $DeduplicationMode mode" -ForegroundColor Cyan
-            } else {
-                Write-Host "No deduplication applied (recommended with role filtering)" -ForegroundColor Green
-            }
+            # if ($DeduplicationMode -ne "None") {
+            #     Write-Host "Deduplication applied: $DeduplicationMode mode" -ForegroundColor Cyan
+            # } else {
+            #     Write-Host "No deduplication applied (recommended with role filtering)" -ForegroundColor Green
+            # }
             
-            Write-Host "Results exported to: $ExportPath" -ForegroundColor Green
-            Write-Host "Authentication used: Certificate-based" -ForegroundColor Cyan
-            
-            # === 5. ENHANCED SUMMARY ANALYSIS ===
-            Write-Host ""
-            Write-Host "=== COMPREHENSIVE SUMMARY ANALYSIS ===" -ForegroundColor Cyan
-            
-            # Service distribution
-            $serviceSummary = $allResults | Group-Object Service | Sort-Object Count -Descending
-            Write-Host ""
-            Write-Host "Service Distribution:" -ForegroundColor Yellow
-            foreach ($service in $serviceSummary) {
-                $percentage = [math]::Round(($service.Count / $allResults.Count) * 100, 1)
-                Write-Host "  $($service.Name): $($service.Count) assignments ($percentage%)" -ForegroundColor White
-            }
-            
-            # Authentication analysis
-            Write-Host ""
-            Write-Host "Authentication Type Analysis:" -ForegroundColor Yellow
-            $authSummary = $allResults | Group-Object AuthenticationType | Sort-Object Count -Descending
-            foreach ($authType in $authSummary) {
-                $percentage = [math]::Round(($authType.Count / $allResults.Count) * 100, 1)
-                $color = if ($authType.Name -eq "Certificate") { "Green" } elseif ($authType.Name -eq "ClientSecret") { "Yellow" } else { "White" }
-                Write-Host "  $($authType.Name): $($authType.Count) assignments ($percentage%)" -ForegroundColor $color
-            }
-            
-            # Assignment type analysis
-            Write-Host ""
-            Write-Host "Assignment Type Distribution:" -ForegroundColor Yellow
-            $assignmentTypeSummary = $allResults | Group-Object AssignmentType | Sort-Object Count -Descending
-            foreach ($assignmentType in $assignmentTypeSummary) {
-                $percentage = [math]::Round(($assignmentType.Count / $allResults.Count) * 100, 1)
-                $color = if ($assignmentType.Name -like "*Eligible*") { "Green" } elseif ($assignmentType.Name -like "*PIM*") { "Cyan" } else { "White" }
-                Write-Host "  $($assignmentType.Name): $($assignmentType.Count) assignments ($percentage%)" -ForegroundColor $color
-            }
-            
-            # Top roles across all services
-            Write-Host ""
-            Write-Host "Top Roles Across All Services:" -ForegroundColor Yellow
-            $roleSummary = $allResults | Group-Object RoleName | Sort-Object Count -Descending | Select-Object -First 15
-            foreach ($role in $roleSummary) {
-                $services = ($allResults | Where-Object { $_.RoleName -eq $role.Name } | Group-Object Service).Name -join ", "
-                Write-Host "  $($role.Name): $($role.Count) assignments" -ForegroundColor White
-                Write-Host "    Services: $services" -ForegroundColor Gray
-            }
-            
-            # User analysis
-            Write-Host ""
-            Write-Host "Users with Most Role Assignments:" -ForegroundColor Yellow
-            $userSummary = $allResults | Where-Object { $_.UserPrincipalName -and $_.UserPrincipalName -ne "Unknown" } | 
-                          Group-Object UserPrincipalName | Sort-Object Count -Descending | Select-Object -First 10
-            foreach ($user in $userSummary) {
-                $userServices = ($allResults | Where-Object { $_.UserPrincipalName -eq $user.Name } | Group-Object Service).Name -join ", "
-                Write-Host "  $($user.Name): $($user.Count) roles across [$userServices]" -ForegroundColor White
-            }
-            
-            # === 6. SECURITY AND PIM ANALYSIS ===
-            Write-Host ""
-            Write-Host "=== SECURITY ANALYSIS ===" -ForegroundColor Cyan
-            
-            # Global administrators
-            $globalAdmins = $allResults | Where-Object { $_.RoleName -eq "Global Administrator" }
-            $globalAdminColor = if ($globalAdmins.Count -le 5) { "Green" } else { "Red" }
-            Write-Host "Global Administrators: $($globalAdmins.Count)" -ForegroundColor $globalAdminColor
-            if ($globalAdmins.Count -gt 5) {
-                Write-Host "  ⚠️ Consider reducing to 5 or fewer" -ForegroundColor Yellow
-            }
-            
-            # Disabled users with roles
-            $disabledUsers = $allResults | Where-Object { $_.UserEnabled -eq $false }
-            $disabledColor = if ($disabledUsers.Count -eq 0) { "Green" } else { "Red" }
-            Write-Host "Disabled Users with Active Roles: $($disabledUsers.Count)" -ForegroundColor $disabledColor
-            if ($disabledUsers.Count -gt 0) {
-                Write-Host "  ⚠️ Review and remove role assignments from disabled accounts" -ForegroundColor Yellow
-            }
-            
-            # PIM analysis
-            $pimEligible = $allResults | Where-Object { $_.AssignmentType -like "*Eligible*" }
-            $pimActive = $allResults | Where-Object { $_.AssignmentType -like "*Active (PIM*" }
-            $permanentActive = $allResults | Where-Object { 
-                $_.AssignmentType -eq "Active" -or 
-                $_.AssignmentType -eq "Azure AD Role" -or
-                $_.AssignmentType -eq "Role Group Member" -or
-                $_.AssignmentType -eq "Intune RBAC"
-            }
-            
-            Write-Host ""
-            Write-Host "Privileged Identity Management (PIM) Analysis:" -ForegroundColor Yellow
-            Write-Host "  PIM Eligible Assignments: $($pimEligible.Count)" -ForegroundColor $(if($pimEligible.Count -gt 0) {"Green"} else {"Yellow"})
-            Write-Host "  PIM Active Assignments: $($pimActive.Count)" -ForegroundColor White
-            Write-Host "  Permanent Active Assignments: $($permanentActive.Count)" -ForegroundColor White
-            
-            # PIM adoption rate
-            $totalEligibleAndPermanent = $pimEligible.Count + $permanentActive.Count
-            if ($totalEligibleAndPermanent -gt 0) {
-                $pimAdoptionRate = [math]::Round(($pimEligible.Count / $totalEligibleAndPermanent) * 100, 1)
-                Write-Host "  PIM Adoption Rate: $pimAdoptionRate%" -ForegroundColor $(if($pimAdoptionRate -gt 30) {"Green"} elseif($pimAdoptionRate -gt 0) {"Yellow"} else {"Red"})
-            }
-            
-            # === 7. SERVICE-SPECIFIC INSIGHTS ===
-            Write-Host ""
-            Write-Host "=== SERVICE-SPECIFIC INSIGHTS ===" -ForegroundColor Cyan
-            
-            # Intune analysis
-            $intuneResults = $allResults | Where-Object { $_.Service -eq "Microsoft Intune" }
-            if ($intuneResults.Count -gt 0) {
+            if ($IncludeAnalysis) {
+                Write-Host "Results exported to: $ExportPath" -ForegroundColor Green
+                Write-Host "Authentication used: Certificate-based" -ForegroundColor Cyan
+                
+                # === 5. ENHANCED SUMMARY ANALYSIS ===
                 Write-Host ""
-                Write-Host "Microsoft Intune Analysis:" -ForegroundColor Yellow
-                $intuneServiceAdmins = $intuneResults | Where-Object { $_.RoleName -eq "Intune Service Administrator" }
-                $intuneRBACAssignments = $intuneResults | Where-Object { $_.RoleType -eq "IntuneRBAC" }
-                $intuneAzureADAssignments = $intuneResults | Where-Object { $_.RoleType -eq "AzureAD" }
+                Write-Host "=== COMPREHENSIVE SUMMARY ANALYSIS ===" -ForegroundColor Cyan
                 
-                Write-Host "  Service Administrators: $($intuneServiceAdmins.Count)" -ForegroundColor $(if($intuneServiceAdmins.Count -le 3) {"Green"} else {"Yellow"})
-                Write-Host "  Intune RBAC Assignments: $($intuneRBACAssignments.Count)" -ForegroundColor White
-                Write-Host "  Azure AD Role Assignments: $($intuneAzureADAssignments.Count)" -ForegroundColor White
-                
-                if ($intuneServiceAdmins.Count -gt 3) {
-                    Write-Host "  ⚠️ Consider reducing Intune Service Administrator count" -ForegroundColor Yellow
-                }
-                if ($intuneAzureADAssignments.Count -gt $intuneRBACAssignments.Count) {
-                    Write-Host "  ⚠️ Consider using more Intune RBAC roles for granular permissions" -ForegroundColor Yellow
-                }
-            }
-            
-            # Exchange analysis
-            $exchangeResults = $allResults | Where-Object { $_.Service -eq "Exchange Online" }
-            if ($exchangeResults.Count -gt 0) {
+                # Service distribution
+                $serviceSummary = $allResults | Group-Object Service | Sort-Object Count -Descending
                 Write-Host ""
-                Write-Host "Exchange Online Analysis:" -ForegroundColor Yellow
-                $orgManagement = $exchangeResults | Where-Object { $_.RoleName -eq "Organization Management" }
-                $roleGroups = $exchangeResults | Where-Object { $_.AssignmentType -eq "Role Group Member" }
-                $azureADRoles = $exchangeResults | Where-Object { $_.RoleSource -eq "AzureAD" }
-                $onPremSynced = $exchangeResults | Where-Object { $_.OnPremisesSyncEnabled -eq $true }
-                
-                Write-Host "  Organization Management Members: $($orgManagement.Count)" -ForegroundColor White
-                Write-Host "  Role Group Assignments: $($roleGroups.Count)" -ForegroundColor White
-                Write-Host "  Azure AD Role Assignments: $($azureADRoles.Count)" -ForegroundColor White
-                Write-Host "  On-Premises Synced Objects: $($onPremSynced.Count)" -ForegroundColor $(if($onPremSynced.Count -gt 0) {"Cyan"} else {"White"})
-                
-                if ($onPremSynced.Count -gt 0) {
-                    Write-Host "  ✓ Hybrid environment detected" -ForegroundColor Green
+                Write-Host "Service Distribution:" -ForegroundColor Yellow
+                foreach ($service in $serviceSummary) {
+                    $percentage = [math]::Round(($service.Count / $allResults.Count) * 100, 1)
+                    Write-Host "  $($service.Name): $($service.Count) assignments ($percentage%)" -ForegroundColor White
                 }
-            }
-            
-            # SharePoint analysis
-            $sharePointResults = $allResults | Where-Object { $_.Service -eq "SharePoint Online" }
-            if ($sharePointResults.Count -gt 0) {
+                
+                # Authentication analysis
                 Write-Host ""
-                Write-Host "SharePoint Online Analysis:" -ForegroundColor Yellow
-                $siteAdmins = $sharePointResults | Where-Object { $_.RoleName -like "*Site*Administrator*" }
-                $appCatalogAdmins = $sharePointResults | Where-Object { $_.RoleName -eq "App Catalog Administrator" }
-                $uniqueSites = ($sharePointResults | Where-Object { $_.SiteTitle } | Select-Object -Unique SiteTitle).Count
+                Write-Host "Authentication Type Analysis:" -ForegroundColor Yellow
+                $authSummary = $allResults | Group-Object AuthenticationType | Sort-Object Count -Descending
+                foreach ($authType in $authSummary) {
+                    $percentage = [math]::Round(($authType.Count / $allResults.Count) * 100, 1)
+                    $color = if ($authType.Name -eq "Certificate") { "Green" } elseif ($authType.Name -eq "ClientSecret") { "Yellow" } else { "White" }
+                    Write-Host "  $($authType.Name): $($authType.Count) assignments ($percentage%)" -ForegroundColor $color
+                }
                 
-                Write-Host "  Site Collection Administrators: $($siteAdmins.Count)" -ForegroundColor White
-                Write-Host "  App Catalog Administrators: $($appCatalogAdmins.Count)" -ForegroundColor White
-                Write-Host "  Unique Sites with Assignments: $uniqueSites" -ForegroundColor White
-            }
-            
-            # === 8. RECOMMENDATIONS ===
-            Write-Host ""
-            Write-Host "=== SECURITY RECOMMENDATIONS ===" -ForegroundColor Green
-            
-            $recommendations = @()
-            
-            # Critical recommendations
-            if ($globalAdmins.Count -gt 5) {
-                $recommendations += "🔴 CRITICAL: Reduce Global Administrator count from $($globalAdmins.Count) to 5 or fewer"
-            }
-            if ($disabledUsers.Count -gt 0) {
-                $recommendations += "🔴 HIGH: Remove role assignments from $($disabledUsers.Count) disabled user accounts"
-            }
-            
-            # Medium priority recommendations
-            if ($pimEligible.Count -eq 0 -and $permanentActive.Count -gt 0) {
-                $recommendations += "🟡 MEDIUM: Consider implementing PIM for eligible assignments"
-            }
-            
-            $clientSecretAuth = $allResults | Where-Object { $_.AuthenticationType -eq "ClientSecret" }
-            if ($clientSecretAuth.Count -gt 0) {
-                $recommendations += "🟡 MEDIUM: Migrate $($clientSecretAuth.Count) client secret authentications to certificate-based"
-            }
-            
-            # Service-specific recommendations
-            if ($intuneResults.Count -gt 0 -and $intuneServiceAdmins.Count -gt 3) {
-                $recommendations += "🟡 MEDIUM: Consider reducing Intune Service Administrator count"
-            }
-            
-            # Positive findings
-            $positiveFindings = @()
-            if ($globalAdmins.Count -le 5) {
-                $positiveFindings += "✅ Global Administrator count is within recommended limits"
-            }
-            if ($disabledUsers.Count -eq 0) {
-                $positiveFindings += "✅ No disabled users with active role assignments"
-            }
-            if ($pimEligible.Count -gt 0) {
-                $positiveFindings += "✅ PIM eligible assignments detected"
-            }
-            $certificateAuth = $allResults | Where-Object { $_.AuthenticationType -eq "Certificate" }
-            if ($certificateAuth.Count -eq $allResults.Count) {
-                $positiveFindings += "✅ All authentications use secure certificate-based method"
-            }
-            
-            # Display recommendations
-            if ($recommendations.Count -gt 0) {
-                Write-Host "Action Required:" -ForegroundColor Red
-                foreach ($rec in $recommendations) {
-                    Write-Host "  $rec" -ForegroundColor White
-                }
-            }
-            
-            if ($positiveFindings.Count -gt 0) {
+                # Assignment type analysis
                 Write-Host ""
-                Write-Host "Positive Security Findings:" -ForegroundColor Green
-                foreach ($finding in $positiveFindings) {
-                    Write-Host "  $finding" -ForegroundColor White
+                Write-Host "Assignment Type Distribution:" -ForegroundColor Yellow
+                $assignmentTypeSummary = $allResults | Group-Object AssignmentType | Sort-Object Count -Descending
+                foreach ($assignmentType in $assignmentTypeSummary) {
+                    $percentage = [math]::Round(($assignmentType.Count / $allResults.Count) * 100, 1)
+                    $color = if ($assignmentType.Name -like "*Eligible*") { "Green" } elseif ($assignmentType.Name -like "*PIM*") { "Cyan" } else { "White" }
+                    Write-Host "  $($assignmentType.Name): $($assignmentType.Count) assignments ($percentage%)" -ForegroundColor $color
                 }
+                
+                # Top roles across all services
+                Write-Host ""
+                Write-Host "Top Roles Across All Services:" -ForegroundColor Yellow
+                $roleSummary = $allResults | Group-Object RoleName | Sort-Object Count -Descending | Select-Object -First 15
+                foreach ($role in $roleSummary) {
+                    $services = ($allResults | Where-Object { $_.RoleName -eq $role.Name } | Group-Object Service).Name -join ", "
+                    Write-Host "  $($role.Name): $($role.Count) assignments" -ForegroundColor White
+                    Write-Host "    Services: $services" -ForegroundColor Gray
+                }
+                
+                # User analysis
+                Write-Host ""
+                Write-Host "Users with Most Role Assignments:" -ForegroundColor Yellow
+                $userSummary = $allResults | Where-Object { $_.UserPrincipalName -and $_.UserPrincipalName -ne "Unknown" } | 
+                            Group-Object UserPrincipalName | Sort-Object Count -Descending | Select-Object -First 10
+                foreach ($user in $userSummary) {
+                    $userServices = ($allResults | Where-Object { $_.UserPrincipalName -eq $user.Name } | Group-Object Service).Name -join ", "
+                    Write-Host "  $($user.Name): $($user.Count) roles across [$userServices]" -ForegroundColor White
+                }
+                
+                # === 6. SECURITY AND PIM ANALYSIS ===
+                Write-Host ""
+                Write-Host "=== SECURITY ANALYSIS ===" -ForegroundColor Cyan
+                
+                # Global administrators
+                $globalAdmins = $allResults | Where-Object { $_.RoleName -eq "Global Administrator" }
+                $globalAdminColor = if ($globalAdmins.Count -le 5) { "Green" } else { "Red" }
+                Write-Host "Global Administrators: $($globalAdmins.Count)" -ForegroundColor $globalAdminColor
+                if ($globalAdmins.Count -gt 5) {
+                    Write-Host "  ⚠️ Consider reducing to 5 or fewer" -ForegroundColor Yellow
+                }
+                
+                # Disabled users with roles
+                $disabledUsers = $allResults | Where-Object { $_.UserEnabled -eq $false }
+                $disabledColor = if ($disabledUsers.Count -eq 0) { "Green" } else { "Red" }
+                Write-Host "Disabled Users with Active Roles: $($disabledUsers.Count)" -ForegroundColor $disabledColor
+                if ($disabledUsers.Count -gt 0) {
+                    Write-Host "  ⚠️ Review and remove role assignments from disabled accounts" -ForegroundColor Yellow
+                }
+                
+                # PIM analysis
+                $pimEligible = $allResults | Where-Object { $_.AssignmentType -like "*Eligible*" }
+                $pimActive = $allResults | Where-Object { $_.AssignmentType -like "*Active (PIM*" }
+                $permanentActive = $allResults | Where-Object { 
+                    $_.AssignmentType -eq "Active" -or 
+                    $_.AssignmentType -eq "Azure AD Role" -or
+                    $_.AssignmentType -eq "Role Group Member" -or
+                    $_.AssignmentType -eq "Intune RBAC"
+                }
+                
+                Write-Host ""
+                Write-Host "Privileged Identity Management (PIM) Analysis:" -ForegroundColor Yellow
+                Write-Host "  PIM Eligible Assignments: $($pimEligible.Count)" -ForegroundColor $(if($pimEligible.Count -gt 0) {"Green"} else {"Yellow"})
+                Write-Host "  PIM Active Assignments: $($pimActive.Count)" -ForegroundColor White
+                Write-Host "  Permanent Active Assignments: $($permanentActive.Count)" -ForegroundColor White
+                
+                # PIM adoption rate
+                $totalEligibleAndPermanent = $pimEligible.Count + $permanentActive.Count
+                if ($totalEligibleAndPermanent -gt 0) {
+                    $pimAdoptionRate = [math]::Round(($pimEligible.Count / $totalEligibleAndPermanent) * 100, 1)
+                    Write-Host "  PIM Adoption Rate: $pimAdoptionRate%" -ForegroundColor $(if($pimAdoptionRate -gt 30) {"Green"} elseif($pimAdoptionRate -gt 0) {"Yellow"} else {"Red"})
+                }
+                
+                # === 7. SERVICE-SPECIFIC INSIGHTS ===
+                Write-Host ""
+                Write-Host "=== SERVICE-SPECIFIC INSIGHTS ===" -ForegroundColor Cyan
+                
+                # Intune analysis
+                $intuneResults = $allResults | Where-Object { $_.Service -eq "Microsoft Intune" }
+                if ($intuneResults.Count -gt 0) {
+                    Write-Host ""
+                    Write-Host "Microsoft Intune Analysis:" -ForegroundColor Yellow
+                    $intuneServiceAdmins = $intuneResults | Where-Object { $_.RoleName -eq "Intune Service Administrator" }
+                    $intuneRBACAssignments = $intuneResults | Where-Object { $_.RoleType -eq "IntuneRBAC" }
+                    $intuneAzureADAssignments = $intuneResults | Where-Object { $_.RoleType -eq "AzureAD" }
+                    
+                    Write-Host "  Service Administrators: $($intuneServiceAdmins.Count)" -ForegroundColor $(if($intuneServiceAdmins.Count -le 3) {"Green"} else {"Yellow"})
+                    Write-Host "  Intune RBAC Assignments: $($intuneRBACAssignments.Count)" -ForegroundColor White
+                    Write-Host "  Azure AD Role Assignments: $($intuneAzureADAssignments.Count)" -ForegroundColor White
+                    
+                    if ($intuneServiceAdmins.Count -gt 3) {
+                        Write-Host "  ⚠️ Consider reducing Intune Service Administrator count" -ForegroundColor Yellow
+                    }
+                    if ($intuneAzureADAssignments.Count -gt $intuneRBACAssignments.Count) {
+                        Write-Host "  ⚠️ Consider using more Intune RBAC roles for granular permissions" -ForegroundColor Yellow
+                    }
+                }
+                
+                # Exchange analysis
+                $exchangeResults = $allResults | Where-Object { $_.Service -eq "Exchange Online" }
+                if ($exchangeResults.Count -gt 0) {
+                    Write-Host ""
+                    Write-Host "Exchange Online Analysis:" -ForegroundColor Yellow
+                    $orgManagement = $exchangeResults | Where-Object { $_.RoleName -eq "Organization Management" }
+                    $roleGroups = $exchangeResults | Where-Object { $_.AssignmentType -eq "Role Group Member" }
+                    $azureADRoles = $exchangeResults | Where-Object { $_.RoleSource -eq "AzureAD" }
+                    $onPremSynced = $exchangeResults | Where-Object { $_.OnPremisesSyncEnabled -eq $true }
+                    
+                    Write-Host "  Organization Management Members: $($orgManagement.Count)" -ForegroundColor White
+                    Write-Host "  Role Group Assignments: $($roleGroups.Count)" -ForegroundColor White
+                    Write-Host "  Azure AD Role Assignments: $($azureADRoles.Count)" -ForegroundColor White
+                    Write-Host "  On-Premises Synced Objects: $($onPremSynced.Count)" -ForegroundColor $(if($onPremSynced.Count -gt 0) {"Cyan"} else {"White"})
+                    
+                    if ($onPremSynced.Count -gt 0) {
+                        Write-Host "  ✓ Hybrid environment detected" -ForegroundColor Green
+                    }
+                }
+                
+                # SharePoint analysis
+                $sharePointResults = $allResults | Where-Object { $_.Service -eq "SharePoint Online" }
+                if ($sharePointResults.Count -gt 0) {
+                    Write-Host ""
+                    Write-Host "SharePoint Online Analysis:" -ForegroundColor Yellow
+                    $siteAdmins = $sharePointResults | Where-Object { $_.RoleName -like "*Site*Administrator*" }
+                    $appCatalogAdmins = $sharePointResults | Where-Object { $_.RoleName -eq "App Catalog Administrator" }
+                    $uniqueSites = ($sharePointResults | Where-Object { $_.SiteTitle } | Select-Object -Unique SiteTitle).Count
+                    
+                    Write-Host "  Site Collection Administrators: $($siteAdmins.Count)" -ForegroundColor White
+                    Write-Host "  App Catalog Administrators: $($appCatalogAdmins.Count)" -ForegroundColor White
+                    Write-Host "  Unique Sites with Assignments: $uniqueSites" -ForegroundColor White
+                }
+                
+                # === 8. RECOMMENDATIONS ===
+                Write-Host ""
+                Write-Host "=== SECURITY RECOMMENDATIONS ===" -ForegroundColor Green
+                
+                $recommendations = @()
+                
+                # Critical recommendations
+                if ($globalAdmins.Count -gt 5) {
+                    $recommendations += "🔴 CRITICAL: Reduce Global Administrator count from $($globalAdmins.Count) to 5 or fewer"
+                }
+                if ($disabledUsers.Count -gt 0) {
+                    $recommendations += "🔴 HIGH: Remove role assignments from $($disabledUsers.Count) disabled user accounts"
+                }
+                
+                # Medium priority recommendations
+                if ($pimEligible.Count -eq 0 -and $permanentActive.Count -gt 0) {
+                    $recommendations += "🟡 MEDIUM: Consider implementing PIM for eligible assignments"
+                }
+                
+                $clientSecretAuth = $allResults | Where-Object { $_.AuthenticationType -eq "ClientSecret" }
+                if ($clientSecretAuth.Count -gt 0) {
+                    $recommendations += "🟡 MEDIUM: Migrate $($clientSecretAuth.Count) client secret authentications to certificate-based"
+                }
+                
+                # Service-specific recommendations
+                if ($intuneResults.Count -gt 0 -and $intuneServiceAdmins.Count -gt 3) {
+                    $recommendations += "🟡 MEDIUM: Consider reducing Intune Service Administrator count"
+                }
+                
+                # Positive findings
+                $positiveFindings = @()
+                if ($globalAdmins.Count -le 5) {
+                    $positiveFindings += "✅ Global Administrator count is within recommended limits"
+                }
+                if ($disabledUsers.Count -eq 0) {
+                    $positiveFindings += "✅ No disabled users with active role assignments"
+                }
+                if ($pimEligible.Count -gt 0) {
+                    $positiveFindings += "✅ PIM eligible assignments detected"
+                }
+                $certificateAuth = $allResults | Where-Object { $_.AuthenticationType -eq "Certificate" }
+                if ($certificateAuth.Count -eq $allResults.Count) {
+                    $positiveFindings += "✅ All authentications use secure certificate-based method"
+                }
+                
+                # Display recommendations
+                if ($recommendations.Count -gt 0) {
+                    Write-Host "Action Required:" -ForegroundColor Red
+                    foreach ($rec in $recommendations) {
+                        Write-Host "  $rec" -ForegroundColor White
+                    }
+                }
+                
+                if ($positiveFindings.Count -gt 0) {
+                    Write-Host ""
+                    Write-Host "Positive Security Findings:" -ForegroundColor Green
+                    foreach ($finding in $positiveFindings) {
+                        Write-Host "  $finding" -ForegroundColor White
+                    }
+                }
+                
+                # General recommendations
+                Write-Host ""
+                Write-Host "General Security Best Practices:" -ForegroundColor Cyan
+                Write-Host "• Implement regular access reviews for privileged roles" -ForegroundColor White
+                Write-Host "• Enable PIM for eligible assignments to reduce standing privileges" -ForegroundColor White
+                Write-Host "• Monitor privileged role assignments with automated alerts" -ForegroundColor White
+                Write-Host "• Implement break-glass emergency access procedures" -ForegroundColor White
+                Write-Host "• Regularly rotate certificates (recommended 12-24 months)" -ForegroundColor White
+                Write-Host "• Use service-specific RBAC roles instead of broad administrative roles" -ForegroundColor White
+                
+                # === 9. ENHANCED REPORTING OPTIONS ===
+                Write-Host ""
+                Write-Host "=== ENHANCED REPORTING OPTIONS ===" -ForegroundColor Cyan
+                Write-Host "PowerShell Commands for Additional Analysis:" -ForegroundColor Yellow
+                Write-Host "• Export-M365AuditHtmlReport -AuditResults `$results" -ForegroundColor White
+                Write-Host "• Export-M365AuditJsonReport -AuditResults `$results" -ForegroundColor White
+                Write-Host "• Export-M365AuditExcelReport -AuditResults `$results" -ForegroundColor White
+                Write-Host "• Get-M365RoleAnalysis -AuditResults `$results" -ForegroundColor White
+                Write-Host "• Get-M365ComplianceGaps -AuditResults `$results" -ForegroundColor White
+                
+                Write-Host ""
+                Write-Host "✓ Enhanced comprehensive audit completed successfully!" -ForegroundColor Green
+                Write-Host "No deduplication required with proper role filtering architecture" -ForegroundColor Green
             }
-            
-            # General recommendations
-            Write-Host ""
-            Write-Host "General Security Best Practices:" -ForegroundColor Cyan
-            Write-Host "• Implement regular access reviews for privileged roles" -ForegroundColor White
-            Write-Host "• Enable PIM for eligible assignments to reduce standing privileges" -ForegroundColor White
-            Write-Host "• Monitor privileged role assignments with automated alerts" -ForegroundColor White
-            Write-Host "• Implement break-glass emergency access procedures" -ForegroundColor White
-            Write-Host "• Regularly rotate certificates (recommended 12-24 months)" -ForegroundColor White
-            Write-Host "• Use service-specific RBAC roles instead of broad administrative roles" -ForegroundColor White
-            
-            # === 9. ENHANCED REPORTING OPTIONS ===
-            Write-Host ""
-            Write-Host "=== ENHANCED REPORTING OPTIONS ===" -ForegroundColor Cyan
-            Write-Host "PowerShell Commands for Additional Analysis:" -ForegroundColor Yellow
-            Write-Host "• Export-M365AuditHtmlReport -AuditResults `$results" -ForegroundColor White
-            Write-Host "• Export-M365AuditJsonReport -AuditResults `$results" -ForegroundColor White
-            Write-Host "• Export-M365AuditExcelReport -AuditResults `$results" -ForegroundColor White
-            Write-Host "• Get-M365RoleAnalysis -AuditResults `$results" -ForegroundColor White
-            Write-Host "• Get-M365ComplianceGaps -AuditResults `$results" -ForegroundColor White
-            
-            Write-Host ""
-            Write-Host "✓ Enhanced comprehensive audit completed successfully!" -ForegroundColor Green
-            Write-Host "No deduplication required with proper role filtering architecture" -ForegroundColor Green
         }
         else {
-            Write-Host "No role assignments found." -ForegroundColor Yellow
+                Write-Host "No role assignments found." -ForegroundColor Yellow
         }
+        
         
         return $allResults
     }
