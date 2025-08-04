@@ -12,15 +12,22 @@ function Get-PurviewRoleAudit {
         [string]$Organization,
 
         [string]$TenantId,
+
         [string]$ClientId,
+
         [string]$CertificateThumbprint,
+
         [switch]$IncludeAzureADRoles,  # New parameter to control inclusion of overarching roles
-        [switch]$IncludePIM,           # Enhanced PIM support
-        [switch]$IncludeComplianceCenter  # Option to include Compliance Center role groups (if accessible)
+
+        [bool]$IncludePIM = $true,           # Enhanced PIM support. Changed to bool and set default to true.
+
+        [bool]$IncludeComplianceCenter = $true,  # Option to include Compliance Center role groups (if accessible), changed to bool and set default to true
+
+        [switch]$IncludeSummary # Show the summary information on completion.
     )
     
     $results = @()
-    
+    $global:ProgressPreference = 'SilentlyContinue'
     try {
         # Certificate authentication is required for this function
         if ($TenantId -and $ClientId -and $CertificateThumbprint) {
@@ -52,17 +59,7 @@ function Get-PurviewRoleAudit {
         # Purview-specific Azure AD administrative roles (NOT overarching roles)
         $purviewSpecificRoles = @(
             "Compliance Administrator",        # Purview-focused
-            "Compliance Data Administrator",   # Purview-focused  
-            "eDiscovery Administrator",
-            "eDiscovery Manager", 
-            "Information Protection Administrator",
-            "Information Protection Analyst",
-            "Information Protection Investigator",
-            "Information Protection Reader",
-            "Supervisory Review Administrator", # Clearly administrative
-            "Data Loss Prevention Administrator",
-            "Records Management Administrator",
-            "Retention Administrator"
+            "Compliance Data Administrator"
         )
         
         # Overarching roles that should only appear in Azure AD audit
@@ -90,267 +87,112 @@ function Get-PurviewRoleAudit {
         Write-Host "Found $($roleDefinitions.Count) Purview role definitions" -ForegroundColor Green
 
         $allAssignments = Get-RoleAssignmentsForService -RoleDefinitions $roleDefinitions -ServiceName "Purview" -IncludePIM:$IncludePIM
-        
-<#         # Get ALL assignment types (regular + PIM eligible + PIM active)
-        $allAssignments = @()
-        
-        # 1. Regular assignments
-        Write-Host "Checking regular Purview assignments..." -ForegroundColor Cyan
-        $regularAssignments = Get-MgRoleManagementDirectoryRoleAssignment -All | Where-Object { $_.RoleDefinitionId -in $roleDefinitions.Id }
-        if ($regularAssignments) { $allAssignments += $regularAssignments }
-        Write-Host "Found $($regularAssignments.Count) regular assignments" -ForegroundColor Gray
-        
-        # 2. PIM eligible assignments
-        if ($IncludePIM) {
-            Write-Host "Checking PIM eligible Purview assignments..." -ForegroundColor Cyan
-            $pimEligibleCount = 0
-            try {
-                foreach ($roleId in $roleDefinitions.Id) {
-                    $pimEligible = Get-MgRoleManagementDirectoryRoleEligibilitySchedule -Filter "roleDefinitionId eq '$roleId'" -ErrorAction SilentlyContinue
-                    if ($pimEligible) {
-                        $allAssignments += $pimEligible
-                        $pimEligibleCount += $pimEligible.Count
-                    }
-                }
-            }
-            catch {
-                Write-Verbose "Could not retrieve PIM eligible assignments: $($_.Exception.Message)"
-            }
-            Write-Host "Found $pimEligibleCount PIM eligible assignments" -ForegroundColor Gray
-            
-            # 3. PIM active assignments
-            Write-Host "Checking PIM active Purview assignments..." -ForegroundColor Cyan
-            $pimActiveCount = 0
-            try {
-                foreach ($roleId in $roleDefinitions.Id) {
-                    $pimActive = Get-MgRoleManagementDirectoryRoleAssignmentSchedule -Filter "roleDefinitionId eq '$roleId'" -ErrorAction SilentlyContinue
-                    if ($pimActive) {
-                        $allAssignments += $pimActive
-                        $pimActiveCount += $pimActive.Count
-                    }
-                }
-            }
-            catch {
-                Write-Verbose "Could not retrieve PIM active assignments: $($_.Exception.Message)"
-            }
-            Write-Host "Found $pimActiveCount PIM active assignments" -ForegroundColor $(if($pimActiveCount -gt 0) {"Green"} else {"Gray"})
-        }
-  #>       
+             
         Write-Host "Total Purview assignments to process: $($allAssignments.Count)" -ForegroundColor Green
         
-        # Process all assignments
-        foreach ($assignment in $allAssignments) {
-            try {
-                $role = $roleDefinitions | Where-Object { $_.Id -eq $assignment.RoleDefinitionId }
-                
-                # Determine assignment type
-                $assignmentType = "Azure AD Role"
-                if ($assignment.PSObject.TypeNames -contains "Microsoft.Graph.PowerShell.Models.MicrosoftGraphUnifiedRoleEligibilitySchedule") {
-                    $assignmentType = "Eligible (PIM)"
-                } 
-                elseif ($assignment.PSObject.TypeNames -contains "Microsoft.Graph.PowerShell.Models.MicrosoftGraphUnifiedRoleAssignmentSchedule") {
-                    $assignmentType = "Active (PIM)"
-                }
-                
-                # Resolve principal (users, groups, service principals)
-                $principalInfo = @{
-                    UserPrincipalName = "Unknown"
-                    DisplayName = "Unknown"
-                    UserId = $assignment.PrincipalId
-                    UserEnabled = $null
-                    #LastSignIn = $null
-                    PrincipalType = "Unknown"
-                    OnPremisesSyncEnabled = $null
-                }
-                
-                # Try as user first
-                try {
-                    $user = Get-MgUser -UserId $assignment.PrincipalId -Property "UserPrincipalName,DisplayName,AccountEnabled,OnPremisesSyncEnabled" -ErrorAction SilentlyContinue
-                    if ($user) {
-                        $principalInfo.UserPrincipalName = $user.UserPrincipalName
-                        $principalInfo.DisplayName = $user.DisplayName
-                        $principalInfo.UserEnabled = $user.AccountEnabled
-                        #$principalInfo.LastSignIn = $user.SignInActivity.LastSignInDateTime
-                        $principalInfo.PrincipalType = "User"
-                        $principalInfo.OnPremisesSyncEnabled = $user.OnPremisesSyncEnabled
-                    }
-                }
-                catch { }
-                
-                # Try as group if not user
-                if ($principalInfo.PrincipalType -eq "Unknown") {
-                    try {
-                        $group = Get-MgGroup -GroupId $assignment.PrincipalId -Property "Mail,DisplayName,OnPremisesSyncEnabled" -ErrorAction SilentlyContinue
-                        if ($group) {
-                            $principalInfo.UserPrincipalName = $group.Mail
-                            $principalInfo.DisplayName = "$($group.DisplayName) (Group)"
-                            $principalInfo.PrincipalType = "Group"
-                            $principalInfo.OnPremisesSyncEnabled = $group.OnPremisesSyncEnabled
-                        }
-                    }
-                    catch { }
-                }
-                
-                # Try as service principal if still unknown
-                if ($principalInfo.PrincipalType -eq "Unknown") {
-                    try {
-                        $servicePrincipal = Get-MgServicePrincipal -ServicePrincipalId $assignment.PrincipalId -ErrorAction SilentlyContinue
-                        if ($servicePrincipal) {
-                            $principalInfo.UserPrincipalName = $servicePrincipal.AppId
-                            $principalInfo.DisplayName = "$($servicePrincipal.DisplayName) (Application)"
-                            $principalInfo.PrincipalType = "ServicePrincipal"
-                        }
-                    }
-                    catch { }
-                }
-                
-                # Determine role scope for enhanced deduplication
-                $roleScope = if ($role.DisplayName -in $overarchingRoles) { "Overarching" } else { "Service-Specific" }
-                
-                $results += [PSCustomObject]@{
-                    Service = "Microsoft Purview"
-                    UserPrincipalName = $principalInfo.UserPrincipalName
-                    DisplayName = $principalInfo.DisplayName
-                    UserId = $principalInfo.UserId
-                    RoleName = $role.DisplayName
-                    RoleDefinitionId = $assignment.RoleDefinitionId
-                    RoleScope = $roleScope  # New property for enhanced deduplication
-                    AssignmentType = $assignmentType
-                    AssignedDateTime = $assignment.CreatedDateTime
-                    UserEnabled = $principalInfo.UserEnabled
-                    #LastSignIn = $principalInfo.LastSignIn
-                    Scope = $assignment.DirectoryScopeId
-                    AssignmentId = $assignment.Id
-                    AuthenticationType = "Certificate"
-                    PrincipalType = $principalInfo.PrincipalType
-                    RoleSource = "AzureAD"
-                    OnPremisesSyncEnabled = $principalInfo.OnPremisesSyncEnabled
-                    RoleGroupDescription = $role.Description
-                    PIMStartDateTime = $assignment.ScheduleInfo.StartDateTime
-                    PIMEndDateTime = $assignment.ScheduleInfo.Expiration.EndDateTime
-                }
-                
-            }
-            catch {
-                Write-Verbose "Error processing Purview assignment: $($_.Exception.Message)"
-            }
+        $convertParams = @{
+            Assignments = $allAssignments
+            RoleDefinitions = $roleDefinitions
+            ServiceName = "Microsoft Purview"
+            OverarchingRoles = $overarchingRoles
         }
+
+        $results = ConvertTo-ServiceAssignmentResults @convertParams
         
         # === COMPLIANCE CENTER ROLE GROUPS (OPTIONAL) ===
         if ($IncludeComplianceCenter) {
             Write-Host "Attempting to retrieve Compliance Center role groups..." -ForegroundColor Cyan
             
             try {
-                # Check if connected to Exchange/Compliance PowerShell
-                $complianceSession = Get-PSSession | Where-Object { 
-                    $_.ComputerName -like "*compliance*" -or $_.ComputerName -like "*protection*" 
-                }
-                
-                if (-not $complianceSession) {
-                    Write-Host "Connecting to Security & Compliance Center..." -ForegroundColor Yellow
-                    
-                    # Attempt connection with certificate authentication
-                    try {
-                        if ($IsWindows) {
-                            Connect-IPPSSession -AppId $script:AppConfig.ClientId -CertificateThumbprint $script:AppConfig.CertificateThumbprint -Organization $Organization -ShowBanner:$false
-                        } elseif ($IsLinux -or $IsMacOS) {
-                            Connect-IPPSSession -AppId $script:AppConfig.ClientId -Certificate $script:AppConfig.Certificate -Organization $Organization -ShowBanner:$false
-                        }
-                        Write-Host "✓ Connected to Security & Compliance Center" -ForegroundColor Green
-                    }
-                    catch {
-                        Write-Warning "Could not connect to Compliance Center: $($_.Exception.Message)"
-                        Write-Host "Note: Compliance Center has limited certificate authentication support" -ForegroundColor Yellow
-                        # Continue without Compliance Center data
-                    }
-                }
-                
                 # If connected, try to get compliance role groups
-                if (Get-PSSession | Where-Object { $_.ComputerName -like "*compliance*" -or $_.ComputerName -like "*protection*" }) {
-                    Write-Host "Retrieving Compliance Center role groups..." -ForegroundColor Cyan
-                    
-                    try {
-                        # Get compliance-specific role groups
-                        $complianceRoleGroups = @(
-                            "Compliance Administrator",
-                            "Compliance Data Administrator", 
-                            "eDiscovery Manager",
-                            "Organization Management",
-                            "Records Management",
-                            "Reviewer",
-                            "Supervisory Review"
-                        )
-                        
-                        foreach ($roleGroupName in $complianceRoleGroups) {
-                            try {
-                                $roleGroup = Get-RoleGroup -Identity $roleGroupName -ErrorAction SilentlyContinue
-                                if ($roleGroup) {
-                                    $members = Get-RoleGroupMember -Identity $roleGroup.Identity -ErrorAction SilentlyContinue
-                                    
-                                    foreach ($member in $members) {
-                                        # Include users AND groups
-                                        $isUser = $member.PrimarySmtpAddress -and $member.RecipientType -eq "UserMailbox"
-                                        $isGroup = $member.RecipientType -in @("MailUniversalSecurityGroup", "UniversalSecurityGroup", "MailUniversalDistributionGroup")
-                                        
-                                        if ($isUser -or $isGroup) {
-                                            $principalType = if ($isUser) { "User" } else { "Group" }
-                                            $userPrincipalName = if ($isUser) { $member.PrimarySmtpAddress } else { $member.Name }
-                                            
-                                            # Try to get additional user info from Graph for consistency
-                                            $userEnabled = $null
-                                            $lastSignIn = $null
-                                            $onPremisesSyncEnabled = $null
-                                            
-                                            if ($isUser -and $member.ExternalDirectoryObjectId) {
-                                                try {
-                                                    $graphUser = Get-MgUser -UserId $member.ExternalDirectoryObjectId -Property "AccountEnabled,SignInActivity,OnPremisesSyncEnabled" -ErrorAction SilentlyContinue
-                                                    if ($graphUser) {
-                                                        $userEnabled = $graphUser.AccountEnabled
-                                                        $lastSignIn = $graphUser.SignInActivity.LastSignInDateTime
-                                                        $onPremisesSyncEnabled = $graphUser.OnPremisesSyncEnabled
-                                                    }
-                                                }
-                                                catch {
-                                                    Write-Verbose "Could not retrieve Graph data for compliance user $($member.PrimarySmtpAddress): $($_.Exception.Message)"
-                                                }
-                                            }
-                                            
-                                            $results += [PSCustomObject]@{
-                                                Service = "Microsoft Purview"
-                                                UserPrincipalName = $userPrincipalName
-                                                DisplayName = $member.DisplayName
-                                                UserId = $member.ExternalDirectoryObjectId
-                                                RoleName = $roleGroup.Name
-                                                RoleDefinitionId = $roleGroup.Guid
-                                                RoleScope = "Service-Specific"  # Compliance role groups are service-specific
-                                                AssignmentType = "Role Group Member"
-                                                AssignedDateTime = $null
-                                                UserEnabled = $userEnabled
-                                                LastSignIn = $lastSignIn
-                                                Scope = "Organization"
-                                                AssignmentId = $roleGroup.Identity
-                                                AuthenticationType = "Certificate"
-                                                PrincipalType = $principalType
-                                                RoleSource = "ComplianceCenter"
-                                                OnPremisesSyncEnabled = $onPremisesSyncEnabled
-                                                #RoleGroupDescription = $roleGroup.Description
-                                                RecipientType = $member.RecipientType
-                                                # Additional fields for consistency
-                                                PIMStartDateTime = $null
-                                                PIMEndDateTime = $null
-                                            }
-                                        }
-                                    }
+                # If connected to Exchange Online Get-RoleGroup will return all role groups including Purview.
+                # We are not interested in the Exchange role groups in this function, so we are going to
+                # disconnect from Exchange Online. This wll disconnect any previous Purview connections.
+                # This is necessary because just trying to disconnect Exchange can result in odd errors. 
+                $Sessions = Get-ConnectionInformation
+                $EXOSessions = $Sessions | Where-Object { $_.connectionUri -like "*outlook.office365.com*" -and $_.State -eq "Connected"}
+                if ($EXOSessions) {
+                    [void](Disconnect-ExchangeOnline -Confirm:$false)
+                }
+
+                # Clear the progress bars MS won't allow us to not show
+                # there may be multiple
+
+                for ($i = 0; $i -lt 5; $i++) {
+                    Write-Progress -Completed
+                }
+
+                # Now connect to Purview. We should not have any connections still valid.
+                Write-Host "Connecting to Microsoft Purview..." -ForegroundColor Yellow
+                try {
+                    $IPPSessionParams = @{
+                        AppId = $script:AppConfig.ClientId
+                        Organization = $Organization
+                        ShowBanner = $false
+                    }
+                    if ($IsWindows) {
+                        $IPPSessionParams["CertificateThumbprint"] = $script:AppConfig.CertificateThumbprint
+                    } elseIf ($IsLinux -or $IsMacOS) {
+                        $IPPSessionParams["Certificate"] = $script:AppConfig.Certificate
+                    }
+                    Connect-IPPSSession @IPPSessionParams
+                }
+                catch {
+                    Write-Warning "Could not connect to Compliance Center: $($_.Exception.Message)"
+                    Write-Host "Note: Compliance Center has limited certificate authentication support" -ForegroundColor Yellow
+                    # Continue without Compliance Center data
+                }
+
+                Write-Host "Retrieving Compliance Center role groups..." -ForegroundColor Cyan
+                
+                try {
+                    # Get compliance-specific role groups
+                    # If we are only connected to Purview, we should only return Purview specific Role Groups.
+                    # As most of the Purview role groups do not have members nor do they have administrative roles
+                    # we are only focusing on the Administrative Groups.
+
+                    $complianceRoleGroups = @(
+                        "ComplianceAdministrator", 
+                        "PurviewAdministrators", 
+                        "AttackSimAdministrators", 
+                        "SecurityAdministrator", 
+                        "BillingAdministrator", 
+                        "PrivacyManagementAdministrators", 
+                        "SubjectRightsRequestAdministrators", 
+                        "CommunicationComplianceAdministrators", 
+                        "ComplianceDataAdministrator", 
+                        "ComplianceManagerAdministrators", 
+                        "DataSourceAdministrators", 
+                        "MailFlowAdministrator", 
+                        "KnowledgeAdministrators", 
+                        "QuarantineAdministrator"
+                    )
+
+                    # Retrieve all Compliance role groups
+
+                    $RoleGroups = Get-RoleGroup | Where-Object { $_.Name -in $complianceRoleGroups}
+
+                    foreach ($roleGroup in $RoleGroups) {
+                        try {
+                            # This is no longer needed as we are getting all the compliance role groups above.
+                            # $roleGroup = Get-RoleGroup -Identity $roleGroupName -ErrorAction SilentlyContinue
+                            if ($roleGroup) {
+                                $members = Get-RoleGroupMember -Identity $roleGroup.Name -ErrorAction SilentlyContinue
+
+                                # Debug Code
+                                Write-Host "  Role Group: $($roleGroup.DisplayName) has $($members.count) members." -ForegroundColor Yellow
+                                foreach ($member in $members) {
+                                    $results += Get-RoleGroupMemberResult -Member $member -Service "Microsoft Purview" -RoleGroup $roleGroup                              
                                 }
                             }
-                            catch {
-                                Write-Verbose "Could not retrieve role group $roleGroupName`: $($_.Exception.Message)"
-                            }
+                        }
+                        catch {
+                            Write-Verbose "Could not retrieve role group $roleGroupName`: $($_.Exception.Message)"
                         }
                     }
-                    catch {
-                        Write-Warning "Error retrieving Compliance Center role groups: $($_.Exception.Message)"
-                    }
+                }
+                catch {
+                    Write-Warning "Error retrieving Compliance Center role groups: $($_.Exception.Message)"
                 }
             }
             catch {
@@ -360,65 +202,66 @@ function Get-PurviewRoleAudit {
         
         Write-Host "✓ Purview administrative role audit completed. Found $($results.Count) administrative role assignments" -ForegroundColor Green
         
-        # Provide feedback about role filtering
-        if (-not $IncludeAzureADRoles) {
-            Write-Host "  (Excluding overarching Azure AD roles - use -IncludeAzureADRoles to include)" -ForegroundColor Yellow
-        }
-        
-        if ($IncludeComplianceCenter) {
-            $complianceCenterResults = $results | Where-Object { $_.RoleSource -eq "ComplianceCenter" }
-            Write-Host "  (Compliance Center role groups: $($complianceCenterResults.Count))" -ForegroundColor Cyan
-        }
-        
-        # Show detailed breakdown
-        if ($results.Count -gt 0) {
+        If ($IncludeSummary) {
+            # Provide feedback about role filtering
+            if (-not $IncludeAzureADRoles) {
+                Write-Host "  (Excluding overarching Azure AD roles - use -IncludeAzureADRoles to include)" -ForegroundColor Yellow
+            }
+            
+            if ($IncludeComplianceCenter) {
+                $complianceCenterResults = $results | Where-Object { $_.RoleSource -eq "ComplianceCenter" }
+                Write-Host "  (Compliance Center role groups: $($complianceCenterResults.Count))" -ForegroundColor Cyan
+            }
+            
+            # Show detailed breakdown
+            if ($results.Count -gt 0) {
+                Write-Host ""
+                Write-Host "Administrative role breakdown:" -ForegroundColor Cyan
+                
+                $sourceSummary = $results | Group-Object RoleSource
+                Write-Host "Role sources:" -ForegroundColor Yellow
+                foreach ($source in $sourceSummary) {
+                    Write-Host "  $($source.Name): $($source.Count)" -ForegroundColor White
+                }
+                
+                $typeSummary = $results | Group-Object PrincipalType
+                Write-Host "Principal types:" -ForegroundColor Yellow
+                foreach ($type in $typeSummary) {
+                    Write-Host "  $($type.Name): $($type.Count)" -ForegroundColor White
+                }
+                
+                $assignmentTypeSummary = $results | Group-Object AssignmentType
+                Write-Host "Assignment types:" -ForegroundColor Yellow
+                foreach ($type in $assignmentTypeSummary) {
+                    Write-Host "  $($type.Name): $($type.Count)" -ForegroundColor White
+                }
+                
+                $scopeSummary = $results | Group-Object RoleScope
+                Write-Host "Role scope:" -ForegroundColor Yellow
+                foreach ($scope in $scopeSummary) {
+                    Write-Host "  $($scope.Name): $($scope.Count)" -ForegroundColor White
+                }
+                
+                # Show top roles
+                $roleSummary = $results | Group-Object RoleName | Sort-Object Count -Descending | Select-Object -First 5
+                Write-Host "Top Purview roles:" -ForegroundColor Yellow
+                foreach ($role in $roleSummary) {
+                    Write-Host "  $($role.Name): $($role.Count) assignments" -ForegroundColor White
+                }
+            }
+            
             Write-Host ""
-            Write-Host "Administrative role breakdown:" -ForegroundColor Cyan
-            
-            $sourceSummary = $results | Group-Object RoleSource
-            Write-Host "Role sources:" -ForegroundColor Yellow
-            foreach ($source in $sourceSummary) {
-                Write-Host "  $($source.Name): $($source.Count)" -ForegroundColor White
+            Write-Host "=== SCOPE CLARIFICATION ===" -ForegroundColor Green
+            Write-Host "✓ Focused on Purview/Compliance Azure AD administrative roles only" -ForegroundColor Green
+            Write-Host "✓ Included: Compliance Administrator, eDiscovery roles, Information Protection roles" -ForegroundColor Green
+            Write-Host "✓ Included: Records Management, DLP Administrator, Retention Administrator" -ForegroundColor Green
+            if ($IncludeComplianceCenter) {
+                Write-Host "✓ Included: Compliance Center role groups (where accessible)" -ForegroundColor Green
+            } else {
+                Write-Host "✓ Excluded: Compliance Center role groups (use -IncludeComplianceCenter to include)" -ForegroundColor Green
             }
-            
-            $typeSummary = $results | Group-Object PrincipalType
-            Write-Host "Principal types:" -ForegroundColor Yellow
-            foreach ($type in $typeSummary) {
-                Write-Host "  $($type.Name): $($type.Count)" -ForegroundColor White
-            }
-            
-            $assignmentTypeSummary = $results | Group-Object AssignmentType
-            Write-Host "Assignment types:" -ForegroundColor Yellow
-            foreach ($type in $assignmentTypeSummary) {
-                Write-Host "  $($type.Name): $($type.Count)" -ForegroundColor White
-            }
-            
-            $scopeSummary = $results | Group-Object RoleScope
-            Write-Host "Role scope:" -ForegroundColor Yellow
-            foreach ($scope in $scopeSummary) {
-                Write-Host "  $($scope.Name): $($scope.Count)" -ForegroundColor White
-            }
-            
-            # Show top roles
-            $roleSummary = $results | Group-Object RoleName | Sort-Object Count -Descending | Select-Object -First 5
-            Write-Host "Top Purview roles:" -ForegroundColor Yellow
-            foreach ($role in $roleSummary) {
-                Write-Host "  $($role.Name): $($role.Count) assignments" -ForegroundColor White
-            }
-        }
-        
-        Write-Host ""
-        Write-Host "=== SCOPE CLARIFICATION ===" -ForegroundColor Green
-        Write-Host "✓ Focused on Purview/Compliance Azure AD administrative roles only" -ForegroundColor Green
-        Write-Host "✓ Included: Compliance Administrator, eDiscovery roles, Information Protection roles" -ForegroundColor Green
-        Write-Host "✓ Included: Records Management, DLP Administrator, Retention Administrator" -ForegroundColor Green
-        if ($IncludeComplianceCenter) {
-            Write-Host "✓ Included: Compliance Center role groups (where accessible)" -ForegroundColor Green
-        } else {
-            Write-Host "✓ Excluded: Compliance Center role groups (use -IncludeComplianceCenter to include)" -ForegroundColor Green
-        }
-        Write-Host "✓ Enhanced filtering prevents duplication with Azure AD audit" -ForegroundColor Green
-        
+            Write-Host "✓ Enhanced filtering prevents duplication with Azure AD audit" -ForegroundColor Green
+        }            
     }
     catch {
         Write-Error "Error auditing Purview administrative roles: $($_.Exception.Message)"

@@ -817,10 +817,11 @@ function Export-M365AuditHtmlReport {
                 <strong>Audit Scope</strong>
                 <span>$($metadata.servicesAudited) Services</span>
             </div>
+            <!--
             <div class="metadata-item">
                 <strong>Authentication</strong>
                 <span>$(if($metadata.certificateAuthUsed) { "Certificate-Based" } else { "Mixed" })</span>
-            </div>
+            </div> -->
             <div class="metadata-item">
                 <strong>PIM Analysis</strong>
                 <span>$(if($metadata.pimEnabled) { "Included" } else { "N/A" })</span>
@@ -838,7 +839,7 @@ function Export-M365AuditHtmlReport {
                 <div class="subtitle">Across all services</div>
             </div>
             <div class="summary-card">
-                <h3>Unique Users</h3>
+                <h3>Unique Principals</h3>
                 <div class="number">$($metadata.uniqueUsers)</div>
                 <div class="subtitle">With role assignments</div>
             </div>
@@ -1381,7 +1382,8 @@ function Export-M365AuditHtmlReport {
     $html += @"
             </div>
         </div>
-
+"@
+<#
         <div class="section">
             <h2>📈 Enhanced Reporting Options</h2>
             <div class="pim-analysis">
@@ -1409,7 +1411,7 @@ function Export-M365AuditHtmlReport {
             </div>
         </div>
 "@
-
+#>
     # Add compliance analysis if requested and available
     if ($IncludeComplianceGaps -and $complianceAnalysis) {
         $html += @"
@@ -1945,9 +1947,10 @@ function Get-M365ComplianceGaps {
         [Parameter(Mandatory = $true)]
         [array]$AuditResults,
         [switch]$IncludeDetailedAnalysis,
-        [switch]$IncludePIMGaps,
-        [switch]$IncludeIntuneGaps,
-        [switch]$IncludePowerPlatformGaps
+        [bool]$IncludePIMGaps = $true,
+        [bool]$IncludeIntuneGaps = $true,
+        [bool]$IncludePowerPlatformGaps = $true,
+        [switch]$ShowSummary
     )
     
     Write-Host "=== M365 Comprehensive Compliance Gap Analysis ===" -ForegroundColor Green
@@ -2407,20 +2410,22 @@ function Get-M365ComplianceGaps {
     }
     
     # === COMPLIANCE REPORTING AND SUMMARY ===
-    Write-Host ""
-    Write-Host "=== COMPLIANCE GAP SUMMARY ===" -ForegroundColor Yellow
-    
-    if ($gaps.Count -eq 0) {
-        Write-Host "✓ No significant compliance gaps identified!" -ForegroundColor Green
-        return @()
+    if ($ShowSummary) {
+        Write-Host ""
+        Write-Host "=== COMPLIANCE GAP SUMMARY ===" -ForegroundColor Yellow
+        
+        if ($gaps.Count -eq 0) {
+            Write-Host "✓ No significant compliance gaps identified!" -ForegroundColor Green
+            return @()
+        }
+        
+        Write-Host "Total Gaps Found: $($gaps.Count)" -ForegroundColor White
+        Write-Host "  Critical: $($criticalGaps.Count)" -ForegroundColor Red
+        Write-Host "  High: $($highGaps.Count)" -ForegroundColor Red
+        Write-Host "  Medium: $($mediumGaps.Count)" -ForegroundColor Yellow
+        Write-Host "  Low: $($lowGaps.Count)" -ForegroundColor Cyan
     }
-    
-    Write-Host "Total Gaps Found: $($gaps.Count)" -ForegroundColor White
-    Write-Host "  Critical: $($criticalGaps.Count)" -ForegroundColor Red
-    Write-Host "  High: $($highGaps.Count)" -ForegroundColor Red
-    Write-Host "  Medium: $($mediumGaps.Count)" -ForegroundColor Yellow
-    Write-Host "  Low: $($lowGaps.Count)" -ForegroundColor Cyan
-    
+        
     if ($IncludeDetailedAnalysis) {
         Write-Host ""
         Write-Host "=== DETAILED GAP ANALYSIS ===" -ForegroundColor Cyan
@@ -2456,38 +2461,39 @@ function Get-M365ComplianceGaps {
                 Write-Host "    Recommendation: $($gap.Recommendation)" -ForegroundColor Gray
             }
         }
+    
+        # Compliance framework mapping
+        Write-Host ""
+        Write-Host "=== COMPLIANCE FRAMEWORK IMPACT ===" -ForegroundColor Cyan
+        $frameworkImpact = $gaps | ForEach-Object { $_.ComplianceFramework -split ", " } | 
+                        Group-Object | Sort-Object Count -Descending
+        
+        foreach ($framework in $frameworkImpact) {
+            Write-Host "  $($framework.Name): $($framework.Count) gaps" -ForegroundColor White
+        }
+        
+        Write-Host ""
+        Write-Host "Priority Remediation Recommendations:" -ForegroundColor Yellow
+        $priorityRecommendations = @()
+        $priorityRecommendations += $criticalGaps | ForEach-Object { $_.Recommendation }
+        $priorityRecommendations += $highGaps | ForEach-Object { $_.Recommendation }
+        
+        $priorityRecommendations | Select-Object -Unique | ForEach-Object {
+            Write-Host "• $_" -ForegroundColor White
+        }
     }
-    
-    # Compliance framework mapping
-    Write-Host ""
-    Write-Host "=== COMPLIANCE FRAMEWORK IMPACT ===" -ForegroundColor Cyan
-    $frameworkImpact = $gaps | ForEach-Object { $_.ComplianceFramework -split ", " } | 
-                      Group-Object | Sort-Object Count -Descending
-    
-    foreach ($framework in $frameworkImpact) {
-        Write-Host "  $($framework.Name): $($framework.Count) gaps" -ForegroundColor White
-    }
-    
-    Write-Host ""
-    Write-Host "Priority Remediation Recommendations:" -ForegroundColor Yellow
-    $priorityRecommendations = @()
-    $priorityRecommendations += $criticalGaps | ForEach-Object { $_.Recommendation }
-    $priorityRecommendations += $highGaps | ForEach-Object { $_.Recommendation }
-    
-    $priorityRecommendations | Select-Object -Unique | ForEach-Object {
-        Write-Host "• $_" -ForegroundColor White
-    }
-    
-    return $gaps
+
+    return $Gaps
 }
 
 function Export-M365AuditExcelReport {
     param(
-        [Parameter(Mandatory = $true)]
+        #[Parameter(Mandatory = $true)]
         [array]$AuditResults,
         
         [string]$OutputPath = ".\M365_Audit_Report_$(Get-Date -Format 'yyyyMMdd_HHmmss').xlsx",
         [string]$OrganizationName = "Organization",
+        [switch]$IncludeGapAnalysis,
         [switch]$AutoOpen
     )
     
@@ -2496,6 +2502,7 @@ function Export-M365AuditExcelReport {
     
     if ($AuditResults.Count -eq 0) {
         Write-Warning "No audit results provided"
+
         return
     }
     
@@ -2512,7 +2519,7 @@ function Export-M365AuditExcelReport {
         }
     }
     
-    Import-Module ImportExcel -Force
+    Import-Module ImportExcel -Force 3>$null
 
     $StartRow = 1
     $StartColumn = 1
@@ -2525,7 +2532,24 @@ function Export-M365AuditExcelReport {
             Remove-Item $OutputPath -Force
         }
         
-        # Calculate statistics matching HTML report
+        $worksheet = $excel.Workbook.Worksheets['Summary']
+
+        # ==== Report Title ====
+        $reportTitle = "$OrganizationName Microsoft 365 Role Audit"
+
+        $Range = $worksheet.Cells.Item($StartRow, $StartColumn).Address
+
+        Set-ExcelRange -Range $Range `
+                        -Worksheet $worksheet `
+                        -FontSize 14 `
+                        -Bold `
+                        -Underline `
+                        -FontColor Blue `
+                        -Value $reportTitle
+
+        $StartRow += 2
+
+        # === Calculate statistics matching HTML report ===
         $totalAssignments = $AuditResults.Count
         $uniqueUsers = ($AuditResults | Where-Object { $_.UserPrincipalName -and $_.UserPrincipalName -ne "Unknown" } | 
                        Select-Object -Unique UserPrincipalName).Count
@@ -2534,6 +2558,8 @@ function Export-M365AuditExcelReport {
         $pimEligible = $AuditResults | Where-Object { $_.AssignmentType -like "*Eligible*" }
         $pimActive = $AuditResults | Where-Object { $_.AssignmentType -like "*Active (PIM*" }
         $services = $AuditResults | Group-Object Service | Sort-Object Count -Descending
+
+        # === Summary Dashboard ===
         
         Write-Host "Creating Summary Dashboard..." -ForegroundColor Cyan
         $Summary = [Ordered]@{                                            
@@ -2545,59 +2571,103 @@ function Export-M365AuditExcelReport {
             "PIM Eligible" = $pimEligible.Count
         }
 
+        $Range = $worksheet.Cells.Item($StartRow, $StartColumn).Address
+
+        Set-ExcelRange -Range $Range `
+                        -Worksheet $worksheet `
+                        -FontSize 14 `
+                        -FontColor Blue `
+                        -Bold `
+                        -Underline `
+                        -Value 'Summary'
+        
+        $StartRow += 1
+
+
         $excel = $Summary.GetEnumerator() | Select-Object @{Name="Metric"; Expression={$_.Name}}, Value  | `
             Export-Excel    -ExcelPackage $excel `
-                            -WorksheetName "Summary" `
+                            -WorksheetName $worksheet.Name `
                             -StartRow $StartRow `
-                            -TableName 'Summary_Metrics' `
-                            -Title 'Summary' `
-                            -TitleSize 14 `
-                            -TitleBold `
+                            -TableName 'SummaryMetrics' `
                             -PassThru
+
+        $worksheet.Tables['SummaryMetrics'].ShowFilter = $false
         
+        $StartRow += $Summary.Keys.Count + 2
         
         $summaryCards = @()
 
+        # ==== Service Assignments ====
+
         foreach ($service in $services) {
-            $percentage = [math]::Round(($service.Count / $totalAssignments) * 100, 1)
+            $percentage = [math]::Round(($service.Count / $totalAssignments) , 2)
             $summaryCards += [PSCustomObject]@{
                 Service = $service.Name
                 Assignments = $service.Count
-                Percentage = "$percentage%"
+                Percentage = $percentage
             }
         }
-
-        $StartRow += $Summary.Keys.Count + 3
         
         $Chart = New-ExcelChartDefinition -ChartType Pie `
                                             -XRange Service `
                                             -YRange Assignments `
                                             -Title "Service Assignment Distribution" `
                                             -TitleSize 10 `
-                                            -Row ($StartRow - 1) `
+                                            -Row ($StartRow ) `
+                                            -RowOffSetPixels 0 `
                                             -Column ($StartColumn + 2) `
                                             -LegendSize 8 `
                                             -Width 200 `
-                                            -Height 200
+                                            -Height 200 `
+                                            -WarningAction SilentlyContinue
+
+        $Range = $worksheet.Cells.Item($StartRow, $StartColumn).Address
+
+        Set-ExcelRange -Range $Range `
+                        -Worksheet $worksheet `
+                        -FontSize 14 `
+                        -FontColor Blue `
+                        -Bold `
+                        -Underline `
+                        -Value 'Assignments'
+
+        $StartRow += 1
 
         $Excel = $summaryCards | Export-Excel   -ExcelPackage $excel `
                                                 -WorksheetName 'Summary' `
                                                 -StartRow $StartRow `
-                                                -Title "Assignments" `
-                                                -TableName 'Assignments' `
-                                                -TitleBold `
-                                                -TitleSize '14' `
+                                                -TableName 'TblAssignments' `
                                                 -AutoNameRange `
                                                 -ExcelChartDefinition $Chart `
-                                                -PassThru
+                                                -PassThru `
+                                                -WarningAction SilentlyContinue
         
+        $worksheet.Tables['TblAssignments'].ShowFilter = $false
+
+        $Range = $excel.Workbook.Worksheets['Summary'].Names['Percentage'].Address
+
+        Set-ExcelRange -Range $Range `
+                        -Worksheet $worksheet `
+                        -NumberFormat Percentage
+
         $StartRow += ($summaryCards.Count + 3)
 
-        # Show statistics
+        # === Show Statistics ===
         $Stats = Get-AuditStatistics -AuditResults $AuditResults 
 
         $Summary = Get-ReportSummary -AuditResults $AuditResults -Stats $Stats
 
+        $Range = $worksheet.Cells.Item($StartRow, $StartColumn).Address
+
+        Set-ExcelRange -Range $Range `
+                        -Worksheet $worksheet `
+                        -FontSize 14 `
+                        -FontColor Blue `
+                        -Bold `
+                        -Underline `
+                        -Value 'Users With Most Roles'
+
+        $StartRow += 1
 
         # Users with most roles
         $Chart = New-ExcelChartDefinition -ChartType BarStacked `
@@ -2605,8 +2675,8 @@ function Export-M365AuditExcelReport {
                                             -YRange 'Number_Of_Roles' `
                                             -Title 'Users with Most Roles' `
                                             -TitleSize 10 `
-                                            -Row ($StartRow ) `
-                                            -RowOffSetPixels -10 `
+                                            -Row ($StartRow - 1) `
+                                            -RowOffSetPixels 0 `
                                             -Column ($StartColumn + 2) `
                                             -Width 750 `
                                             -Heigh 325 `
@@ -2614,32 +2684,45 @@ function Export-M365AuditExcelReport {
     
 
         $excel = $Summary.usersWithMostRoles | Select-Object @{Name = 'Display Name'; Expression = {$_.DisplayName}}, `
-                                        @{Name = 'User Principal Name'; Expression = {$_.userprincipalName}}, `
+                                        @{Name = 'User Principal Name'; Expression = {$_.userPrincipalName}}, `
                                         @{Name = 'Number of Roles'; Expression = {$_.roleCount}} | `
                     Export-Excel -ExcelPackage $excel `
                                 -WorksheetName 'Summary' `
                                 -StartRow $StartRow `
-                                -Title 'Users with Most Roles' `
-                                -TableName 'ReportSummary' `
-                                -TitleBold `
-                                -TitleSize 14 `
+                                -TableName 'TblUserWithMostRoles' `
                                 -AutoNameRange `
                                 -ExcelChartDefinition $Chart `
-                                -PassThru -WarningAction SilentlyContinue
+                                -PassThru `
+                                -WarningAction SilentlyContinue
+
+        $worksheet.Tables['TblUserWithMostRoles'].ShowFilter = $false
         
         $StartRow += ($Summary.usersWithMostRoles.Count + 3)
 
-        # Assignment Types
+        # === Assignment Types ===
         $Chart = New-ExcelChartDefinition -ChartType Pie `
                                     -XRange 'Assignment_Type' `
                                     -YRange 'Assignments' `
                                     -Title "Assignment Types" `
                                     -TitleSize 10 `
                                     -LegendSize 8 `
-                                    -Row ($StartRow - 1) `
+                                    -Row ($StartRow) `
+                                    -RowOffSetPixels 0 `
                                     -Column ($StartColumn + 2) `
                                     -Width 200 `
                                     -Height 200
+
+        $Range = $worksheet.Cells.Item($StartRow, $StartColumn).Address
+
+        Set-ExcelRange -Range $Range `
+                        -Worksheet $worksheet `
+                        -FontSize 14 `
+                        -FontColor Blue `
+                        -Bold `
+                        -Underline `
+                        -Value 'Assignment Type'
+
+        $StartRow += 1
 
         $excel = $Summary.assignmentTypes | Select-Object @{Name = 'Assignment Type'; Expression={$_.type}}, `
                                                             @{Name = 'Percentage'; Expression = {$_.percentage}}, `
@@ -2647,28 +2730,40 @@ function Export-M365AuditExcelReport {
                 Export-Excel -ExcelPackage $Excel `
                             -WorksheetName 'Summary' `
                             -StartRow $StartRow `
-                            -Title 'Assignment Types' `
-                            -TableName 'AssignmentTypes' `
-                            -TitleBold `
-                            -TitleSize 12 `
+                            -TableName 'TblAssignmentTypes' `
                             -AutoNameRange `
                             -ExcelChartDefinition $Chart `
-                            -PassThru -WarningAction SilentlyContinue
-        
-        $StartRow += ($Summary.assignmentTypes.Count + 3)
+                            -PassThru `
+                            -WarningAction SilentlyContinue
 
-        # Top Roles
+        $worksheet.Tables['TblAssignmentTypes'].ShowFilter = $false
+        
+        $StartRow += ($Summary.assignmentTypes.Count + 5)
+
+        # === Top Roles ===
         $Chart = New-ExcelChartDefinition -ChartType BarStacked `
                                             -XRange 'Role' `
                                             -YRange 'Assignment_Count' `
                                             -Title 'Top Roles' `
                                             -TitleSize 10 `
                                             -Row ($StartRow ) `
-                                            -RowOffSetPixels -10 `
+                                            -RowOffSetPixels 0 `
                                             -Column ($StartColumn + 3) `
                                             -Width 800 `
                                             -Height 350 ` `
                                             -NoLegend
+
+        $Range = $Worksheet.Cells.Item($StartRow, $StartColumn).Address
+
+        Set-ExcelRange -Range $Range `
+                        -Worksheet $worksheet `
+                        -FontSize 14 `
+                        -FontColor Blue `
+                        -Bold `
+                        -Underline `
+                        -Value 'Top Roles'
+        
+        $StartRow += 1
                                             
         $excel = $Summary.topRoles | Sort-Object -Property riskLevel | `
                     Select-Object   @{Name = 'Role'; Expression={$_.roleName}}, `
@@ -2678,14 +2773,20 @@ function Export-M365AuditExcelReport {
                     Export-Excel    -ExcelPackage $excel `
                                     -WorksheetName 'Summary' `
                                     -StartRow $StartRow `
-                                    -TableName 'topRoles' `
-                                    -Title 'Top Roles' `
-                                    -TitleBold `
-                                    -TitleSize 14 `
+                                    -TableName 'TblTopRoles' `
                                     -AutoNameRange `
                                     -ExcelChartDefinition $Chart `
-                                    -PassThru -WarningAction SilentlyContinue
+                                    -ConditionalText $(
+                                        New-ConditionalText -Range 'Risk_Level' -ConditionalType:Equal -Text "Low" -ConditionalTextColor Green -BackgroundColor $null
+                                        New-ConditionalText -Range 'Risk_Level' -ConditionalType:Equal -Text "Medium" -ConditionalTextColor Purple -BackgroundColor $null
+                                        New-ConditionalText -Range 'Risk_Level' -ConditionalType:Equal -Text 'High' -ConditionalTextColor Orange -BackgroundColor $Null
+                                        New-ConditionalText -Range 'Risk_Level' -ConditionalType:Equal -Text 'Critical' -ConditionalTextColor Red -BackgroundColor $null
+                                    ) `
+                                    -PassThru `
+                                    -WarningAction SilentlyContinue
 
+        $worksheet.Tables['TblTopRoles'].ShowFilter = $false
+        
         $StartRow += ($Summary.topRoles.Count + 3)
 
         Write-Host "✓ Summary dashboard created" -ForegroundColor Green
@@ -2697,10 +2798,25 @@ function Export-M365AuditExcelReport {
 
         $StartRow = 1
         
-        # Group Data By Service
         $Worksheet = $excel.Workbook.Worksheets.Add("by Role")
+
+        # Sheet Title 
+        $Range = $worksheet.Cells.Item($StartRow, $StartColumn).Address
+
+        Set-ExcelRange -Range $Range `
+                        -Worksheet $worksheet `
+                        -FontSize 14 `
+                        -FontColor Blue `
+                        -Bold `
+                        -Underline `
+                        -Value 'Assignments by Roles'
         
+        $StartRow += 2
+
+        # Group Data By Service
         $resultsByService = $AuditResults | Group-Object -Property Service
+
+        # Loop through each Service Group and create a table of role assignments
         foreach ($Service in $resultsByService) {
             $Range = $Worksheet.Cells.Item($StartRow, $StartColumn).Address
             Set-ExcelRange  -Range $Range `
@@ -2728,6 +2844,7 @@ function Export-M365AuditExcelReport {
 
             $StartRow += 2
 
+            # Loop through each role and create the assignment tables
             foreach ($Role in $serviceByRoleName) {
                 $Range = $Worksheet.Cells.Item($StartRow, $StartColumn).Address
                 Set-ExcelRange  -Range $Range `
@@ -2752,14 +2869,29 @@ function Export-M365AuditExcelReport {
                                 -Value $Role.Count 
 
                 $StartRow += 1
-                $random = Get-Random
-                $TableName = ($Role.Name -replace " ","_") + $random.ToString()
-                $excel = $Role.Group | Select-Object DisplayName, UserPrincipalName, AssignmentType | `
+                #$random = Get-Random
+                $TableName = "Table" + (Get-Date).ToFileTime().ToString()
+
+                $excel = $Role.Group | Select-Object `
+                                            @{Name = 'Name'; Expression = {$_.DisplayName}}, `
+                                            @{Name = 'User Principal Name'; Expression = {$_.UserPrincipalName}}, `
+                                            @{Name = "Enabled"; Expression = {$_.UserEnabled}}, `
+                                            @{Name = 'Assignment Type'; Expression = {$_.AssignmentType}}, `
+                                            @{Name = 'PIM Start Date'; Expression = {$_.PIMStartDateTime}}, `
+                                            @{Name = 'PIM End Date'; Expression = {$_.PIMEndDateTime}} | `
                     Export-Excel    -ExcelPackage $excel `
                                     -WorksheetName $Worksheet.Name `
                                     -TableName $TableName `
                                     -StartRow $StartRow `
                                     -PassThru
+
+                $worksheet.Tables[$TableName].ShowFilter = $false
+                $Address = $worksheet.Tables[$TableName].Address.Address
+                Add-ConditionalFormatting -Worksheet $worksheet `
+                                            -Address $Address `
+                                            -RuleType:Equal `
+                                            -ConditionValue $false `
+                                            -ForegroundColor Red
 
                 $StartRow += ($Role.Count + 2)
             }
@@ -2778,6 +2910,19 @@ function Export-M365AuditExcelReport {
 
         $StartRow = 1
 
+        $Range = $worksheet.Cells.Item($StartRow, $StartColumn).Address
+
+        Set-ExcelRange -Range $Range `
+                        -Worksheet $worksheet `
+                        -FontSize 14 `
+                        -FontColor Blue `
+                        -Bold `
+                        -Underline `
+                        -Value 'Assignments by User'
+
+        $StartRow += 2
+
+        # Loop through each user and create tables for each servicers role assignments
         foreach ($User in $resultsByUser) {
             $Random = Get-Random
             $TableName = ($User.displayName -replace " ","_") + $Random.ToString()
@@ -2801,11 +2946,22 @@ function Export-M365AuditExcelReport {
                             -Worksheet $Worksheet `
                             -FontSize 14 `
                             -Value $User.Count
+            if ($Null -ne $user.Group.UserEnabled) {
+                if ($User.Group.UserEnabled[0] -eq $false) {
+                    $Range = $worksheet.Cells.Item($StartRow, $StartColumn + 3).Address
+                    Set-ExcelRange -Range $Range `
+                                    -Worksheet $worksheet `
+                                    -FontSize 14 `
+                                    -FontColor Red `
+                                    -Value "DISABLED"
+                }
+            }
 
             $StartRow += 2
 
             $UserResultsByService = $User.Group | Group-Object -Property Service
 
+            # Loop through each service and create a table of the role assignment for the user
             foreach ($Service in $UserResultsByService) {
                 $Range = $Worksheet.Cells.Item($StartRow, $StartColumn).Address
                 Set-ExcelRange -Range $Range `
@@ -2830,19 +2986,405 @@ function Export-M365AuditExcelReport {
                 
                 
                 $StartRow += 1
-                $TableName = "Table_" + (Get-Random).ToString()
-                $excel = $Service.Group | Select-Object DisplayName, RoleName | `
+                $TableName = "Table" + (Get-Date).ToFileTime().ToString()
+                $excel = $Service.Group | Select-Object @{Name = 'Role Name'; Expression = {$_.RoleName}}, `
+                                                        @{Name = 'Assignment Type'; Expression = {$_.AssignmentType}}, `
+                                                        @{Name = 'PIM Start Date'; Expression = {$_.PIMStartDateTime}}, `
+                                                        @{Name = 'PIM End Date'; Expression = {$_.PIMEndDateTime}} | `
                     Export-Excel -ExcelPackage $excel `
                                     -WorksheetName $Worksheet.Name `
                                     -StartRow $StartRow`
                                     -TableName $TableName `
-                                    -PassThru               
+                                    -PassThru
+                $worksheet.Tables[$TableName].ShowFilter = $false
+
                 $StartRow += ($Service.count +2) 
             }
 
         }
 
         Write-Host "✓ By User sheet created" -ForegroundColor Green
+
+        # === Gap Analysis ===
+        if ($IncludeGapAnalysis) {
+            Write-Host "Creating Gap Analysis Worksheet..."
+
+            $Gaps = Get-M365ComplianceGaps -AuditResults $AuditResults 
+
+            $Worksheet = $excel.Workbook.Worksheets.Add('Compliance Gaps')
+
+            # preload the severity collections
+            $CriticalGaps = $Gaps.where({$_.Severity -eq 'Critical'})
+            $HighGaps = $Gaps.Where({$_.Severity -eq 'High'})
+            $MediumGaps = $Gaps.Where({$_.Severity -eq 'Medium'})
+            $LowGaps = $Gaps.Where({$_.Severity -eq 'Low'})
+
+            $totalGaps = $Gaps.Count
+            $riskScore = ($criticalGaps.Count * 10) + ($highGaps.Count * 7) + ($mediumGaps.Count * 4) + ($lowGaps.Count * 1)
+            $maxPossibleScore = $totalGaps * 10
+            $compliancePercentage = if ($maxPossibleScore -gt 0) { [math]::Round((($maxPossibleScore - $riskScore) / $maxPossibleScore), 2) } else { 1 }
+            $complianceRating = switch ($compliancePercentage * 100) {
+                { $_ -gt 90 } { "Excellent" }
+                { $_ -in (75..89) } { 'Good' }
+                { $_ -in (50..74) } { 'Poor' }
+                default { 'Critical' }
+            }
+            
+            $StartRow = 1
+
+            # === Compliance Gap Summary ===
+            $Range = $Worksheet.Cells.Item($StartRow, $StartColumn).Address
+
+            Set-ExcelRange -Range $Range `
+                            -Worksheet $Worksheet `
+                            -FontSize 14 `
+                            -FontColor Blue `
+                            -Underline `
+                            -Bold `
+                            -Value 'Compliance Gap Summary'
+
+            $StartRow += 2
+
+            $Range = $worksheet.Cells.Item($StartRow, $StartColumn).Address
+            
+            Set-ExcelRange -Range $Range `
+                            -Worksheet $worksheet `
+                            -FontSize 12 `
+                            -FontColor Blue `
+                            -Underline `
+                            -Bold `
+                            -Value 'Gap Summary'
+
+            $StartRow += 1
+
+            $GapSummary =  [ordered]@{
+                "Total Gaps Found" = $Gaps.Count
+                "Critical" = $CriticalGaps.Count
+                "High" = $HighGaps.Count
+                "Medium" = $MediumGaps.Count
+                "Low" = $LowGaps.count
+                "Compliance %" = $compliancePercentage
+                "Compliance Rating" = $complianceRating
+            }
+
+            $excel = $GapSummary.GetEnumerator() | Select-Object Name, Value | `
+                        Export-Excel -ExcelPackage $Excel `
+                                        -WorksheetName $Worksheet.Name `
+                                        -NoHeader `
+                                        -StartRow $StartRow `
+                                        -StartColumn $StartColumn `
+                                        -NumberFormat 'Number' `
+                                        -PassThru
+
+            # Get the last row or the output
+            $LastRow = $StartRow + ($GapSummary.Keys.Count - 1)
+
+            # Get the range address of the 2nd to last row and the 2nd to last cell
+            $Range = $Worksheet.Cells.Item($LastRow - 1, $StartColumn + 1).Address
+
+            # Set number format to Percentage
+            Set-Format -Range $Range `
+                        -Worksheet $Worksheet `
+                        -NumberFormat Percentage
+
+            # Set the text color based on $complianceRating
+            $TextColor = Switch ( $complianceRating ) {
+                'Excellent' { 'Green' }
+                'Good' { 'Orange'}
+                'Poor' { 'Purple' }
+                'Critical' { 'Red' }
+            }
+
+            # Get the range of last row and the last cell
+            $Range = $Worksheet.Cells.Item($LastRow, $StartColumn + 1).Address
+            # Set the text color
+            Set-Format -Range $Range `
+                        -Worksheet $Worksheet `
+                        -FontColor $TextColor `
+                        -Bold `
+                        -HorizontalAlignment Right
+
+            $StartRow += $GapSummary.Keys.Count + 2
+            
+            # === Detailed Gap Analysis ====
+            $Range = $Worksheet.Cells.Item($StartRow, $StartColumn).Address
+
+            Set-ExcelRange -Range $Range `
+                            -Worksheet $Worksheet `
+                            -FontSize 14 `
+                            -FontColor Blue `
+                            -Underline `
+                            -Value 'Detailed Gap Analysis'
+            $StartRow += 2
+
+            $Range = $Worksheet.Cells.Item($StartRow, $StartColumn).Address
+
+            Set-ExcelRange -Range $Range `
+                            -Worksheet $Worksheet `
+                            -FontSize 12 `
+                            -FontColor Red `
+                            -Bold `
+                            -Underline `
+                            -Value 'Critical Gaps'
+
+            $StartRow += 1
+
+            $excel = $CriticalGaps | Select-Object Issue, Details | `
+                    Export-Excel    -ExcelPackage $excel `
+                                    -WorksheetName $Worksheet.Name `
+                                    -StartRow $StartRow `
+                                    -StartColumn $StartColumn `
+                                    -TableName 'TblCriticalGaps' `
+                                    -PassThru
+
+            $worksheet.Tables['TblCriticalGaps'].ShowFilter = $false
+
+            $StartRow += $CriticalGaps.Count + 2
+
+            $Range = $Worksheet.Cells.Item($StartRow, $StartColumn).Address
+
+            Set-ExcelRange -Range $Range `
+                            -Worksheet $Worksheet `
+                            -FontSize 12 `
+                            -FontColor Orange `
+                            -Bold `
+                            -Underline `
+                            -Value 'High Priority Gaps'
+            
+            $StartRow += 1
+
+            $excel = $HighGaps | Select-Object Issue, Details, Recommendation | `
+                    Export-Excel    -ExcelPackage $excel `
+                                    -WorksheetName $Worksheet.Name `
+                                    -StartRow $StartRow `
+                                    -StartColumn $StartColumn `
+                                    -TableName 'tblHighGaps' `
+                                    -PassThru
+
+            $worksheet.Tables['tblHighGaps'].ShowFilter = $false
+            
+            $StartRow += $HighGaps.Count + 2
+
+            $Range = $Worksheet.Cells.Item($StartRow, $StartColumn).Address
+
+            Set-ExcelRange -Range $Range `
+                            -Worksheet $Worksheet `
+                            -FontSize 12 `
+                            -FontColor Purple `
+                            -Bold `
+                            -Underline `
+                            -Value 'Medium Priority Gaps'
+            $StartRow += 1
+
+            $excel = $MediumGaps | Select-Object Issue, Details, Recommendation | `
+                    Export-Excel    -ExcelPackage $excel `
+                                    -WorksheetName $Worksheet.Name `
+                                    -StartRow $StartRow `
+                                    -StartColumn $StartColumn `
+                                    -TableName 'tblMediumGaps' `
+                                    -PassThru
+
+            $worksheet.Tables['tblMediumGaps'].ShowFilter = $false
+
+            $StartRow += $MediumGaps.Count + 2
+
+            $Range = $Worksheet.Cells.Item($StartRow, $StartColumn).Address
+
+            Set-ExcelRange -Range $Range `
+                            -Worksheet $Worksheet `
+                            -FontSize 12 `
+                            -FontColor Green `
+                            -Bold `
+                            -Underline `
+                            -Value 'Low Priority Gaps'
+            $StartRow += 1
+
+            $excel = $LowGaps | Select-Object Issue, Details, Recommendation | `
+                    Export-Excel    -ExcelPackage $excel `
+                                    -WorksheetName $Worksheet.Name `
+                                    -StartRow $StartRow `
+                                    -StartColumn $StartColumn `
+                                    -TableName 'tblLowGaps' `
+                                    -PassThru
+
+            $worksheet.Tables['tblLowGaps'].ShowFilter = $false
+
+            $StartRow += $LowGaps.count + 2
+
+            # === Compliance Gaps by Category ===
+            $GapsByCategory = $gaps | Group-Object -Property Category | Sort-Object -Property Count -Descending
+            $Categories = @()
+            $Categories += $GapsByCategory | ForEach-Object {
+                $catCritical = ( $_.Group.Where( { $_.Severity -eq 'Critical' } ) ).Count
+                $catHigh = ( $_.Group.Where( { $_.Severity -eq 'High'} ) ).Count
+                $catMedium = ( $_.Group.Where( { $_.Severity -eq 'Medium'} ) ).Count
+                $catLow =  ( $_.Group.Where( { $_.Severity -eq 'Low'} ) ).Count
+                $riskScore = ($catCritical * 10) + ($catHigh * 7) + ($catMedium * 4) + ($catLow * 1)
+                
+                $riskLevel = switch ($riskScore) {
+                    { $_ -ge 30 } { 'Critical' }
+                    { $_ -ge 20 } { 'High' }
+                    { $_ -ge 10 } { 'Medium'}
+                    default { 'Low' }
+                }
+                
+                [PSCustomObject]@{
+                    Category = $_.Name
+                    'Total Gaps' = $_.Count
+                    'Critical Gaps' = $catCritical
+                    'High Gaps' = $catHigh
+                    'Medium Gaps' = $catMedium
+                    'Low Gaps' =  ( $_.Group.Where( { $_.Severity -eq 'Low'} ) ).Count
+                    'Risk Impact' = $riskLevel
+                }
+            }
+
+            $Range = $worksheet.Cells.Item($StartRow, $StartColumn).Address
+
+            Set-ExcelRange -Range $Range `
+                            -Worksheet $worksheet `
+                            -FontSize 12 `
+                            -FontColor Blue `
+                            -Bold `
+                            -Underline `
+                            -Value "Gap Analysis by Category"
+
+            $StartRow += 1
+
+
+            $excel = $Categories | Export-Excel -ExcelPackage $excel `
+                                                -WorksheetName $worksheet.Name `
+                                                -StartRow $StartRow `
+                                                -StartColumn $StartColumn `
+                                                -TableName 'tblGapsByCategory' `
+                                                -AutoNameRange `
+                                                -ConditionalText $(
+                                                    New-ConditionalText -Range 'Risk_Impact' -ConditionalType:Equal -Text "Low" -ConditionalTextColor Green -BackgroundColor $null
+                                                    New-ConditionalText -Range 'Risk_Impact' -ConditionalType:Equal -Text "Medium" -ConditionalTextColor Purple -BackgroundColor $null
+                                                    New-ConditionalText -Range 'Risk_Impact' -ConditionalType:Equal -Text 'High' -ConditionalTextColor Orange -BackgroundColor $Null
+                                                    New-ConditionalText -Range 'Risk_Impact' -ConditionalType:Equal -Text 'Critical' -ConditionalTextColor Red -BackgroundColor $null
+                                                ) `
+                                                -PassThru `
+                                                -WarningAction SilentlyContinue
+
+            $Table = $worksheet.Tables['tblGapsByCategory']
+            $Table.ShowFilter = $false
+<#
+            $TableFirstRow = $StartRow + 1 # Skip the headers
+            $TableLastRow = $TableFirstRow + $Table.Address.Rows
+            $TableColumn = $Table.Address.Columns
+
+            for ($i = $TableFirstRow; $i -lt $TableLastRow; $i++) {
+                $Range = $worksheet.Cells.Item($i, $TableColumn).Address
+                $CellValue = $worksheet.Cells.Item($i, $TableColumn).Value
+                $textColor = switch ($CellValue) {
+                    'Critical' { 'Red' }
+                    'High' { 'Orange' }
+                    'Medium' { 'Purple' }
+                    default { 'Green' }
+                }
+                Set-ExcelRange -Range $Range `
+                                -Worksheet $worksheet `
+                                -FontColor $textColor
+            }
+#>
+            $StartRow += $Categories.Count + 2
+
+            # === Compliance Framework Mapping ====
+
+            $FrameworkImpact = $Gaps | ForEach-Object {
+                $_.ComplianceFramework -split ', '
+            } | Group-Object | Sort-Object -Property Count -Descending
+
+            $Range = $Worksheet.Cells.Item($StartRow, $StartColumn).Address
+
+            Set-ExcelRange -Range $Range `
+                            -Worksheet $Worksheet `
+                            -FontSize 12 `
+                            -FontColor Blue `
+                            -Bold `
+                            -Underline `
+                            -Value 'Framework Impact'
+
+            $StartRow += 1
+
+            $Recommendations = @{                                                            
+                Critical = "Immediate remediation required"
+                High = 'Address within 30 days'
+                Medium = 'Plan remediation within 90 days'
+                Low = 'Monitor and improve'
+            }
+
+            $FrameworkGaps = $Gaps | Group-Object -Property ComplianceFramework
+
+            $FrameworkImpactData = $FrameworkImpact | Select-Object @{Name = 'Compliance Framework'; Expression = {$_.Name}}, `
+                                                    @{Name = 'Affected Controls'; Expression = {$_.Count}}, `
+                                                    @{Name = "Risk Level"; Expression = {$parent = $_; ($FrameworkGaps.Where( { $_.Name -like "*$($parent.name)*"} ).Group | Group-Object Severity | Select-Object -First 1).Name }}, `
+                                                    @{Name = "Recommendation";e={$parent = $_; $severity = ($FrameworkGaps.Where( { $_.Name -like "*$($parent.name)*"}).Group | Group-Object Severity | Select-Object -First 1).Name;$Recommendations[$severity] }}
+            $excel = $FrameworkImpactData | Export-Excel    -ExcelPackage $excel `
+                                        -WorksheetName $Worksheet.Name `
+                                        -StartRow $StartRow `
+                                        -StartColumn $StartColumn `
+                                        -TableName 'FrameworkImpact' `
+                                        -AutoNameRange `
+                                        -ConditionalText $(
+                                            New-ConditionalText -Range 'Risk_Level' -ConditionalType:Equal -Text "Low" -ConditionalTextColor Green -BackgroundColor $null
+                                            New-ConditionalText -Range 'Risk_Level' -ConditionalType:Equal -Text "Medium" -ConditionalTextColor Purple -BackgroundColor $null
+                                            New-ConditionalText -Range 'Risk_Level' -ConditionalType:Equal -Text 'High' -ConditionalTextColor Orange -BackgroundColor $Null
+                                            New-ConditionalText -Range 'Risk_Level' -ConditionalType:Equal -Text 'Critical' -ConditionalTextColor Red -BackgroundColor $null
+                                        ) `
+                                        -WarningAction SilentlyContinue `
+                                        -PassThru
+
+            $table = $worksheet.Tables['FrameworkImpact']
+
+            $Table.ShowFilter = $false
+<#
+            $TableFirstRow = $StartRow + 1 # Skip the headers
+            $TableLastRow = $TableFirstRow + $Table.Address.rows - 1
+            $TableColumn = $StartColumn + $Table.Address.Columns - 2 # 2nd to last column 
+
+            for ($i = $TableFirstRow; $i -lt $TableLastRow; $i++) {
+                $Range = $worksheet.Cells.Item($i, $TableColumn).Address
+                $CellValue = $worksheet.Cells.Item($i, $TableColumn).Value
+                $textColor = switch ($CellValue) {
+                    'Critical' { 'Red' }
+                    'High' { 'Orange' }
+                    'Medium' { 'Purple' }
+                    default { 'Green' }
+                }
+                Set-ExcelRange -Range $Range `
+                                -Worksheet $worksheet `
+                                -FontColor $textColor
+            }
+#>
+
+            $StartRow += $FrameworkImpact.Count + 3
+
+            $Range = $Worksheet.Cells.Item($StartRow, $StartColumn).Address
+
+            Set-ExcelRange -Range $Range `
+                            -Worksheet $Worksheet `
+                            -FontSize 12 `
+                            -FontColor Blue `
+                            -Value 'Priority Remediation Recommendations'
+
+            $StartRow += 1
+
+            $PriorityRecommendations = $Gaps.Where({
+                $_.Severity -eq 'Critical' -or $_.Severity -eq 'High'
+            }) | Select-Object Recommendation -Unique
+
+            $excel = $PriorityRecommendations | `
+                    Export-Excel -ExcelPackage $excel `
+                                    -WorksheetName $Worksheet.Name `
+                                    -StartRow $StartRow `
+                                    -StartColumn $StartColumn `
+                                    -TableName "tblPriorityRecommendations" `
+                                    -PassThru
+
+            $worksheet.Tables['tblPriorityRecommendations'].ShowFilter = $false
+        }
 
         # ==== Raw Data Sheet ====
 
@@ -2853,7 +3395,7 @@ function Export-M365AuditExcelReport {
                         Export-Excel    -ExcelPackage $excel `
                                         -WorksheetName $Worksheet.Name `
                                         -StartRow $StartRow `
-                                        -TableName 'AuditData' `
+                                        -TableName 'tblAuditData' `
                                         -PassThru
 
         Close-ExcelPackage -ExcelPackage $excel
@@ -2872,6 +3414,1155 @@ function Export-M365AuditExcelReport {
             }
         }
         
+        return $null
+    }
+}
+
+function Export-M365ComplianceGapsHtmlReport {
+    param(
+        [Parameter(Mandatory = $true)]
+        [array]$ComplianceGaps,
+        
+        [string]$OutputPath = ".\M365_Compliance_Gaps_Report_$(Get-Date -Format 'yyyyMMdd_HHmmss').html",
+        [string]$OrganizationName = "Organization",
+        [bool]$IncludeExecutiveSummary = $true,
+        [bool]$IncludeDetailedSteps = $true,
+        [switch]$IncludeCharts
+    )
+    
+    Write-Host "Generating HTML Compliance Gaps Report..." -ForegroundColor Cyan
+    
+    if ($ComplianceGaps.Count -eq 0) {
+        Write-Warning "No compliance gaps provided"
+        return
+    }
+    
+    # Categorize gaps by severity
+    $criticalGaps = $ComplianceGaps.Where( { $_.Severity -eq "Critical" } )
+    $highGaps = $ComplianceGaps.Where( { $_.Severity -eq "High" } )
+    $mediumGaps = $ComplianceGaps.Where( { $_.Severity -eq "Medium" } )
+    $lowGaps = $ComplianceGaps.Where( { $_.Severity -eq "Low" } )
+    
+    # Calculate compliance statistics
+    $totalGaps = $ComplianceGaps.Count
+    $riskScore = ($criticalGaps.Count * 10) + ($highGaps.Count * 7) + ($mediumGaps.Count * 4) + ($lowGaps.Count * 1)
+    $maxPossibleScore = $totalGaps * 10
+    $compliancePercentage = if ($maxPossibleScore -gt 0) { [math]::Round((($maxPossibleScore - $riskScore) / $maxPossibleScore) * 100, 1) } else { 100 }
+    
+    # Group gaps by category and compliance framework
+    $gapsByCategory = $ComplianceGaps | Group-Object Category | Sort-Object Count -Descending
+    $frameworkImpact = $ComplianceGaps | ForEach-Object { $_.ComplianceFramework -split ", " } | 
+                      Where-Object { $_ } | Group-Object | Sort-Object Count -Descending
+    
+    # Build HTML content
+    $html = @"
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>M365 Compliance Gaps Report - $OrganizationName</title>
+    <style>
+        body { 
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; 
+            margin: 0; 
+            padding: 20px; 
+            background: linear-gradient(135deg, #f5f7fa 0%, #c3cfe2 100%);
+            line-height: 1.6;
+        }
+        .container { 
+            max-width: 1400px; 
+            margin: 0 auto; 
+            background: white; 
+            padding: 30px; 
+            border-radius: 12px; 
+            box-shadow: 0 10px 30px rgba(0,0,0,0.1); 
+        }
+        .header { 
+            text-align: center; 
+            margin-bottom: 40px; 
+            padding-bottom: 20px; 
+            border-bottom: 3px solid #e74c3c; 
+        }
+        .header h1 { 
+            color: #2c3e50; 
+            margin: 0; 
+            font-size: 2.8em; 
+            font-weight: 300;
+        }
+        .header .subtitle { 
+            color: #7f8c8d; 
+            margin: 10px 0 0 0; 
+            font-size: 1.2em; 
+        }
+        .header .date { 
+            color: #95a5a6; 
+            margin: 5px 0 0 0; 
+            font-size: 1em; 
+        }
+        
+        /* Executive Summary Styles */
+        .executive-summary {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            padding: 30px;
+            border-radius: 12px;
+            margin-bottom: 30px;
+        }
+        .executive-summary h2 {
+            margin-top: 0;
+            font-size: 1.8em;
+            text-align: center;
+        }
+        .executive-summary .summary-text {
+            font-size: 1.1em;
+            line-height: 1.8;
+            text-align: center;
+        }
+        
+        /* Dashboard Grid */
+        .dashboard-grid { 
+            display: grid; 
+            grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); 
+            gap: 25px; 
+            margin-bottom: 40px; 
+        }
+        .dashboard-card { 
+            padding: 25px; 
+            border-radius: 12px; 
+            text-align: center; 
+            box-shadow: 0 5px 15px rgba(0,0,0,0.1);
+            transition: transform 0.3s ease;
+        }
+        .dashboard-card:hover {
+            transform: translateY(-5px);
+        }
+        .dashboard-card.compliance-score { 
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); 
+            color: white; 
+        }
+        .dashboard-card.critical { 
+            background: linear-gradient(135deg, #ff6b6b 0%, #ee5a52 100%); 
+            color: white; 
+        }
+        .dashboard-card.high { 
+            background: linear-gradient(135deg, #ff9f43 0%, #ff7675 100%); 
+            color: white; 
+        }
+        .dashboard-card.medium { 
+            background: linear-gradient(135deg, #feca57 0%, #ff9ff3 100%); 
+            color: white; 
+        }
+        .dashboard-card.low { 
+            background: linear-gradient(135deg, #48dbfb 0%, #0abde3 100%); 
+            color: white; 
+        }
+        .dashboard-card h3 { 
+            margin: 0 0 15px 0; 
+            font-size: 1.3em; 
+            font-weight: 400;
+        }
+        .dashboard-card .number { 
+            font-size: 3em; 
+            font-weight: bold; 
+            margin: 15px 0; 
+            text-shadow: 2px 2px 4px rgba(0,0,0,0.3);
+        }
+        .dashboard-card .description { 
+            font-size: 0.9em; 
+            opacity: 0.9; 
+        }
+        
+        /* Section Styles */
+        .section { 
+            margin-bottom: 50px; 
+        }
+        .section h2 { 
+            color: #2c3e50; 
+            border-bottom: 3px solid #3498db; 
+            padding-bottom: 15px; 
+            font-size: 2em;
+            font-weight: 300;
+        }
+        .section h3 { 
+            color: #34495e; 
+            margin-top: 30px;
+            font-size: 1.5em;
+            font-weight: 400;
+        }
+        
+        /* Gap Cards */
+        .gap-container {
+            display: grid;
+            gap: 20px;
+            margin: 20px 0;
+        }
+        .gap-card {
+            border-radius: 12px;
+            padding: 25px;
+            box-shadow: 0 5px 15px rgba(0,0,0,0.1);
+            transition: all 0.3s ease;
+        }
+        .gap-card:hover {
+            transform: translateY(-3px);
+            box-shadow: 0 8px 25px rgba(0,0,0,0.15);
+        }
+        .gap-card.critical {
+            border-left: 6px solid #e74c3c;
+            background: linear-gradient(135deg, #fdcbcb 0%, #ffeaa7 100%);
+        }
+        .gap-card.high {
+            border-left: 6px solid #f39c12;
+            background: linear-gradient(135deg, #fed7aa 0%, #ffecd2 100%);
+        }
+        .gap-card.medium {
+            border-left: 6px solid #f1c40f;
+            background: linear-gradient(135deg, #fff2c7 0%, #ffe4e1 100%);
+        }
+        .gap-card.low {
+            border-left: 6px solid #3498db;
+            background: linear-gradient(135deg, #d6eaf8 0%, #e8f8f5 100%);
+        }
+        .gap-card .gap-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 15px;
+        }
+        .gap-card .gap-title {
+            font-size: 1.4em;
+            font-weight: 600;
+            color: #2c3e50;
+        }
+        .gap-card .severity-badge {
+            padding: 5px 15px;
+            border-radius: 20px;
+            font-size: 0.9em;
+            font-weight: bold;
+            text-transform: uppercase;
+        }
+        .gap-card .severity-badge.critical { background: #e74c3c; color: white; }
+        .gap-card .severity-badge.high { background: #f39c12; color: white; }
+        .gap-card .severity-badge.medium { background: #f1c40f; color: #2c3e50; }
+        .gap-card .severity-badge.low { background: #3498db; color: white; }
+        .gap-card .gap-details {
+            color: #34495e;
+            font-size: 1.1em;
+            margin-bottom: 20px;
+            line-height: 1.6;
+        }
+        .gap-card .gap-recommendation {
+            background: rgba(255,255,255,0.7);
+            padding: 15px;
+            border-radius: 8px;
+            margin-bottom: 15px;
+            font-weight: 500;
+            color: #2c3e50;
+        }
+        .gap-card .gap-metadata {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 15px;
+            margin-top: 20px;
+            font-size: 0.9em;
+        }
+        .gap-card .metadata-item {
+            background: rgba(255,255,255,0.5);
+            padding: 10px;
+            border-radius: 6px;
+        }
+        .gap-card .metadata-label {
+            font-weight: bold;
+            color: #2c3e50;
+            display: block;
+            margin-bottom: 5px;
+        }
+        .gap-card .affected-users {
+            color: #7f8c8d;
+            font-size: 0.9em;
+            margin-top: 10px;
+        }
+        
+        /* Remediation Steps */
+        .remediation-steps {
+            background: rgba(255,255,255,0.8);
+            border-radius: 8px;
+            padding: 20px;
+            margin-top: 20px;
+        }
+        .remediation-steps h4 {
+            color: #2c3e50;
+            margin-top: 0;
+            margin-bottom: 15px;
+            font-size: 1.2em;
+        }
+        .remediation-steps ol {
+            margin: 0;
+            padding-left: 20px;
+        }
+        .remediation-steps li {
+            margin-bottom: 8px;
+            color: #34495e;
+            line-height: 1.5;
+        }
+        
+        /* Tables */
+        table { 
+            width: 100%; 
+            border-collapse: collapse; 
+            margin: 25px 0; 
+            box-shadow: 0 5px 15px rgba(0,0,0,0.1);
+            border-radius: 12px;
+            overflow: hidden;
+        }
+        th, td { 
+            padding: 15px; 
+            text-align: left; 
+            border-bottom: 1px solid #ecf0f1; 
+        }
+        th { 
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); 
+            color: white; 
+            font-weight: 600;
+            text-transform: uppercase;
+            font-size: 0.9em;
+            letter-spacing: 1px;
+        }
+        tr:nth-child(even) { 
+            background-color: #f8f9fa; 
+        }
+        tr:hover { 
+            background-color: #e3f2fd; 
+            transition: background-color 0.3s ease;
+        }
+        
+        /* Charts and Visualizations */
+        .chart-container { 
+            background: white;
+            padding: 20px;
+            border-radius: 12px;
+            box-shadow: 0 5px 15px rgba(0,0,0,0.1);
+            margin: 20px 0; 
+        }
+        .chart-title {
+            text-align: center;
+            color: #2c3e50;
+            margin-bottom: 20px;
+            font-size: 1.3em;
+        }
+        
+        /* Progress Bars */
+        .progress-container {
+            background: #ecf0f1;
+            border-radius: 10px;
+            padding: 3px;
+            margin: 10px 0;
+        }
+        .progress-bar {
+            height: 20px;
+            border-radius: 8px;
+            transition: width 0.5s ease;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            color: white;
+            font-weight: bold;
+            font-size: 0.9em;
+        }
+        .progress-bar.excellent { background: linear-gradient(135deg, #00b894, #00cec9); }
+        .progress-bar.good { background: linear-gradient(135deg, #fdcb6e, #e17055); }
+        .progress-bar.poor { background: linear-gradient(135deg, #fd79a8, #e84393); }
+        .progress-bar.critical { background: linear-gradient(135deg, #d63031, #74b9ff); }
+        
+        /* Footer */
+        .footer { 
+            margin-top: 60px; 
+            padding-top: 30px; 
+            border-top: 2px solid #ecf0f1; 
+            text-align: center; 
+            color: #7f8c8d; 
+        }
+        .footer .generated-info {
+            font-size: 0.9em;
+            margin-bottom: 10px;
+        }
+        .footer .disclaimer {
+            font-size: 0.8em;
+            font-style: italic;
+        }
+        
+        /* Responsive Design */
+        @media (max-width: 768px) {
+            .dashboard-grid {
+                grid-template-columns: 1fr;
+            }
+            .gap-card .gap-metadata {
+                grid-template-columns: 1fr;
+            }
+            .container {
+                padding: 15px;
+            }
+        }
+        
+        /* Animation */
+        @keyframes fadeIn {
+            from { opacity: 0; transform: translateY(20px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
+        .gap-card {
+            animation: fadeIn 0.5s ease-out;
+        }
+    </style>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/3.9.1/chart.min.js"></script>
+</head>
+<body>
+    <div class="container">
+        <!-- Header -->
+        <div class="header">
+            <h1>🔒 M365 Compliance Gaps Report</h1>
+            <div class="subtitle">Security & Compliance Risk Assessment</div>
+            <div class="date">$OrganizationName | Generated on $(Get-Date -Format 'MMMM dd, yyyy at HH:mm')</div>
+        </div>
+"@
+
+    # Add Executive Summary if requested
+    if ($IncludeExecutiveSummary) {
+        $riskLevel = switch ($compliancePercentage) {
+            { $_ -ge 90 } { "Low Risk" }
+            { $_ -ge 75 } { "Medium Risk" }
+            { $_ -ge 50 } { "High Risk" }
+            default { "Critical Risk" }
+        }
+        
+        $html += @"
+        <!-- Executive Summary -->
+        <div class="executive-summary">
+            <h2>📊 Executive Summary</h2>
+            <div class="summary-text">
+                This compliance assessment identified <strong>$totalGaps compliance gaps</strong> across your Microsoft 365 environment. 
+                Your organization's current compliance score is <strong>$compliancePercentage%</strong>, indicating <strong>$riskLevel</strong> status.
+                <br><br>
+                <strong>Immediate attention required:</strong> $($criticalGaps.Count + $highGaps.Count) high-priority gaps affecting critical security controls and regulatory compliance.
+                <br>
+                <strong>Key focus areas:</strong> $(($gapsByCategory | Select-Object -First 3 | ForEach-Object { $_.Name }) -join ', ')
+            </div>
+        </div>
+"@
+    }
+
+    # Dashboard Cards
+    $html += @"
+        <!-- Dashboard -->
+        <div class="dashboard-grid">
+            <div class="dashboard-card compliance-score">
+                <h3>Compliance Score</h3>
+                <div class="number">$compliancePercentage%</div>
+                <div class="description">Overall compliance rating</div>
+                <div class="progress-container">
+                    <div class="progress-bar $(if($compliancePercentage -ge 90){'excellent'}elseif($compliancePercentage -ge 75){'good'}elseif($compliancePercentage -ge 50){'poor'}else{'critical'})" style="width: $compliancePercentage%;">
+                        $compliancePercentage%
+                    </div>
+                </div>
+            </div>
+            <div class="dashboard-card critical">
+                <h3>Critical Gaps</h3>
+                <div class="number">$($criticalGaps.Count)</div>
+                <div class="description">Immediate action required</div>
+            </div>
+            <div class="dashboard-card high">
+                <h3>High Priority</h3>
+                <div class="number">$($highGaps.Count)</div>
+                <div class="description">Address within 30 days</div>
+            </div>
+            <div class="dashboard-card medium">
+                <h3>Medium Priority</h3>
+                <div class="number">$($mediumGaps.Count)</div>
+                <div class="description">Plan remediation</div>
+            </div>
+            <div class="dashboard-card low">
+                <h3>Low Priority</h3>
+                <div class="number">$($lowGaps.Count)</div>
+                <div class="description">Best practice improvements</div>
+            </div>
+        </div>
+"@
+
+    # Critical Gaps Section
+    if ($criticalGaps.Count -gt 0) {
+        $html += @"
+        <div class="section">
+            <h2>🚨 Critical Gaps - Immediate Action Required</h2>
+            <div class="gap-container">
+"@
+        
+        foreach ($gap in $criticalGaps) {
+            $affectedUsersDisplay = if ($gap.AffectedUsers -and $gap.AffectedUsers.Length -gt 100) { 
+                $gap.AffectedUsers.Substring(0, 97) + "..." 
+            } else { 
+                $gap.AffectedUsers 
+            }
+            
+            $html += @"
+                <div class="gap-card critical">
+                    <div class="gap-header">
+                        <div class="gap-title">🔥 $($gap.Issue)</div>
+                        <div class="severity-badge critical">$($gap.Severity)</div>
+                    </div>
+                    <div class="gap-details">$($gap.Details)</div>
+                    <div class="gap-recommendation">
+                        <strong>💡 Recommendation:</strong> $($gap.Recommendation)
+                    </div>
+                    <div class="gap-metadata">
+                        <div class="metadata-item">
+                            <span class="metadata-label">Category</span>
+                            $($gap.Category)
+                        </div>
+                        <div class="metadata-item">
+                            <span class="metadata-label">Compliance Framework</span>
+                            $($gap.ComplianceFramework)
+                        </div>
+                    </div>
+                    $(if ($affectedUsersDisplay) { "<div class='affected-users'><strong>Affected:</strong> $affectedUsersDisplay</div>" })
+"@
+            
+            if ($IncludeDetailedSteps -and $gap.RemediationSteps) {
+                $html += @"
+                    <div class="remediation-steps">
+                        <h4>📋 Remediation Steps</h4>
+                        <ol>
+"@
+                foreach ($step in $gap.RemediationSteps) {
+                    $html += "                            <li>$step</li>`n"
+                }
+                $html += @"
+                        </ol>
+                    </div>
+"@
+            }
+            
+            $html += "                </div>`n"
+        }
+        
+        $html += @"
+            </div>
+        </div>
+"@
+    }
+
+    # High Priority Gaps Section
+    if ($highGaps.Count -gt 0) {
+        $html += @"
+        <div class="section">
+            <h2>⚠️ High Priority Gaps</h2>
+            <div class="gap-container">
+"@
+        
+        foreach ($gap in $highGaps) {
+            $affectedUsersDisplay = if ($gap.AffectedUsers -and $gap.AffectedUsers.Length -gt 100) { 
+                $gap.AffectedUsers.Substring(0, 97) + "..." 
+            } else { 
+                $gap.AffectedUsers 
+            }
+            
+            $html += @"
+                <div class="gap-card high">
+                    <div class="gap-header">
+                        <div class="gap-title">⚠️ $($gap.Issue)</div>
+                        <div class="severity-badge high">$($gap.Severity)</div>
+                    </div>
+                    <div class="gap-details">$($gap.Details)</div>
+                    <div class="gap-recommendation">
+                        <strong>💡 Recommendation:</strong> $($gap.Recommendation)
+                    </div>
+                    <div class="gap-metadata">
+                        <div class="metadata-item">
+                            <span class="metadata-label">Category</span>
+                            $($gap.Category)
+                        </div>
+                        <div class="metadata-item">
+                            <span class="metadata-label">Compliance Framework</span>
+                            $($gap.ComplianceFramework)
+                        </div>
+                    </div>
+                    $(if ($affectedUsersDisplay) { "<div class='affected-users'><strong>Affected:</strong> $affectedUsersDisplay</div>" })
+"@
+            
+            if ($IncludeDetailedSteps -and $gap.RemediationSteps) {
+                $html += @"
+                    <div class="remediation-steps">
+                        <h4>📋 Remediation Steps</h4>
+                        <ol>
+"@
+                foreach ($step in $gap.RemediationSteps) {
+                    $html += "                            <li>$step</li>`n"
+                }
+                $html += @"
+                        </ol>
+                    </div>
+"@
+            }
+            
+            $html += "                </div>`n"
+        }
+        
+        $html += @"
+            </div>
+        </div>
+"@
+    }
+
+    # Medium Priority Gaps Section
+    if ($mediumGaps.Count -gt 0) {
+        $html += @"
+        <div class="section">
+            <h2>📋 Medium Priority Gaps</h2>
+            <div class="gap-container">
+"@
+        
+        foreach ($gap in $mediumGaps) {
+            $affectedUsersDisplay = if ($gap.AffectedUsers -and $gap.AffectedUsers.Length -gt 80) { 
+                $gap.AffectedUsers.Substring(0, 77) + "..." 
+            } else { 
+                $gap.AffectedUsers 
+            }
+            
+            $html += @"
+                <div class="gap-card medium">
+                    <div class="gap-header">
+                        <div class="gap-title">📋 $($gap.Issue)</div>
+                        <div class="severity-badge medium">$($gap.Severity)</div>
+                    </div>
+                    <div class="gap-details">$($gap.Details)</div>
+                    <div class="gap-recommendation">
+                        <strong>💡 Recommendation:</strong> $($gap.Recommendation)
+                    </div>
+                    <div class="gap-metadata">
+                        <div class="metadata-item">
+                            <span class="metadata-label">Category</span>
+                            $($gap.Category)
+                        </div>
+                        <div class="metadata-item">
+                            <span class="metadata-label">Compliance Framework</span>
+                            $($gap.ComplianceFramework)
+                        </div>
+                    </div>
+                    $(if ($affectedUsersDisplay) { "<div class='affected-users'><strong>Affected:</strong> $affectedUsersDisplay</div>" })
+                </div>
+"@
+        }
+        
+        $html += @"
+            </div>
+        </div>
+"@
+    }
+
+    # Low Priority Gaps Section
+    if ($lowGaps.Count -gt 0) {
+        $html += @"
+        <div class="section">
+            <h2>📈 Low Priority Gaps & Best Practices</h2>
+            <div class="gap-container">
+"@
+        
+        foreach ($gap in $lowGaps) {
+            $html += @"
+                <div class="gap-card low">
+                    <div class="gap-header">
+                        <div class="gap-title">📈 $($gap.Issue)</div>
+                        <div class="severity-badge low">$($gap.Severity)</div>
+                    </div>
+                    <div class="gap-details">$($gap.Details)</div>
+                    <div class="gap-recommendation">
+                        <strong>💡 Recommendation:</strong> $($gap.Recommendation)
+                    </div>
+                    <div class="gap-metadata">
+                        <div class="metadata-item">
+                            <span class="metadata-label">Category</span>
+                            $($gap.Category)
+                        </div>
+                        <div class="metadata-item">
+                            <span class="metadata-label">Compliance Framework</span>
+                            $($gap.ComplianceFramework)
+                        </div>
+                    </div>
+                </div>
+"@
+        }
+        
+        $html += @"
+            </div>
+        </div>
+"@
+    }
+
+    # Analysis by Category Section
+    $html += @"
+        <div class="section">
+            <h2>📊 Gap Analysis by Category</h2>
+            <table>
+                <tr>
+                    <th>Category</th>
+                    <th>Total Gaps</th>
+                    <th>Critical</th>
+                    <th>High</th>
+                    <th>Medium</th>
+                    <th>Low</th>
+                    <th>Risk Impact</th>
+                </tr>
+"@
+
+    foreach ($category in $gapsByCategory) {
+        $categoryGaps = $ComplianceGaps | Where-Object { $_.Category -eq $category.Name }
+        $catCritical = ($categoryGaps | Where-Object { $_.Severity -eq "Critical" }).Count
+        $catHigh = ($categoryGaps | Where-Object { $_.Severity -eq "High" }).Count
+        $catMedium = ($categoryGaps | Where-Object { $_.Severity -eq "Medium" }).Count
+        $catLow = ($categoryGaps | Where-Object { $_.Severity -eq "Low" }).Count
+        $riskScore = ($catCritical * 10) + ($catHigh * 7) + ($catMedium * 4) + ($catLow * 1)
+        
+        $riskLevel = switch ($riskScore) {
+            { $_ -ge 30 } { "🔴 Critical" }
+            { $_ -ge 20 } { "🟠 High" }
+            { $_ -ge 10 } { "🟡 Medium" }
+            default { "🟢 Low" }
+        }
+        
+        $html += @"
+                <tr>
+                    <td><strong>$($category.Name)</strong></td>
+                    <td>$($category.Count)</td>
+                    <td>$catCritical</td>
+                    <td>$catHigh</td>
+                    <td>$catMedium</td>
+                    <td>$catLow</td>
+                    <td>$riskLevel</td>
+                </tr>
+"@
+    }
+
+    $html += @"
+            </table>
+        </div>
+"@
+
+    # Compliance Framework Impact Section
+    $html += @"
+        <div class="section">
+            <h2>📋 Compliance Framework Impact</h2>
+            <table>
+                <tr>
+                    <th>Compliance Framework</th>
+                    <th>Affected Controls</th>
+                    <th>Risk Level</th>
+                    <th>Recommended Action</th>
+                </tr>
+"@
+
+    foreach ($framework in $frameworkImpact | Select-Object -First 10) {
+        $frameworkGaps = $ComplianceGaps | Where-Object { $_.ComplianceFramework -like "*$($framework.Name)*" }
+        $criticalCount = ($frameworkGaps | Where-Object { $_.Severity -eq "Critical" }).Count
+        $highCount = ($frameworkGaps | Where-Object { $_.Severity -eq "High" }).Count
+        
+        $riskLevel = if ($criticalCount -gt 0) { "🔴 Critical" } 
+                    elseif ($highCount -gt 0) { "🟠 High" } 
+                    elseif ($framework.Count -gt 3) { "🟡 Medium" } 
+                    else { "🟢 Low" }
+        
+        $recommendedAction = if ($criticalCount -gt 0) { "Immediate remediation required" }
+                           elseif ($highCount -gt 0) { "Address within 30 days" }
+                           elseif ($framework.Count -gt 3) { "Plan remediation within 90 days" }
+                           else { "Monitor and improve" }
+        
+        $html += @"
+                <tr>
+                    <td><strong>$($framework.Name)</strong></td>
+                    <td>$($framework.Count)</td>
+                    <td>$riskLevel</td>
+                    <td>$recommendedAction</td>
+                </tr>
+"@
+    }
+
+    $html += @"
+            </table>
+        </div>
+"@
+
+    # Chart Section (if requested)
+    if ($IncludeCharts) {
+        $html += @"
+        <div class="section">
+            <h2>📊 Visual Analytics</h2>
+            
+            <!-- Severity Distribution Chart -->
+            <div class="chart-container">
+                <div class="chart-title">Gap Distribution by Severity</div>
+                <canvas id="severityChart" width="400" height="200"></canvas>
+            </div>
+            
+            <!-- Category Distribution Chart -->
+            <div class="chart-container">
+                <div class="chart-title">Gaps by Category</div>
+                <canvas id="categoryChart" width="400" height="200"></canvas>
+            </div>
+            
+            <!-- Compliance Framework Impact Chart -->
+            <div class="chart-container">
+                <div class="chart-title">Top Compliance Framework Impacts</div>
+                <canvas id="frameworkChart" width="400" height="200"></canvas>
+            </div>
+        </div>
+"@
+    }
+
+    # Remediation Roadmap Section
+    $priorityGaps = $criticalGaps + $highGaps
+    if ($priorityGaps.Count -gt 0) {
+        $html += @"
+        <div class="section">
+            <h2>🛣️ Remediation Roadmap</h2>
+            <div style="background: linear-gradient(135deg, #f8f9fa 0%, #e9ecef 100%); padding: 25px; border-radius: 12px; margin: 20px 0;">
+                <h3 style="color: #2c3e50; margin-top: 0;">📅 Immediate Actions (Next 30 Days)</h3>
+"@
+
+        $immediateActions = ($priorityGaps | ForEach-Object { $_.Recommendation }) | Select-Object -Unique
+        foreach ($action in $immediateActions | Select-Object -First 5) {
+            $html += @"
+                <div style="background: white; padding: 15px; margin: 10px 0; border-left: 4px solid #e74c3c; border-radius: 8px;">
+                    <strong>🔧 $action</strong>
+                </div>
+"@
+        }
+
+        if ($mediumGaps.Count -gt 0) {
+            $html += @"
+                <h3 style="color: #2c3e50; margin-top: 30px;">📋 Medium-Term Actions (Next 90 Days)</h3>
+"@
+
+            $mediumActions = ($mediumGaps | ForEach-Object { $_.Recommendation }) | Select-Object -Unique
+            foreach ($action in $mediumActions | Select-Object -First 3) {
+                $html += @"
+                <div style="background: white; padding: 15px; margin: 10px 0; border-left: 4px solid #f39c12; border-radius: 8px;">
+                    <strong>📋 $action</strong>
+                </div>
+"@
+            }
+        }
+
+        if ($lowGaps.Count -gt 0) {
+            $html += @"
+                <h3 style="color: #2c3e50; margin-top: 30px;">📈 Long-Term Improvements (Next 6 Months)</h3>
+"@
+
+            $longTermActions = ($lowGaps | ForEach-Object { $_.Recommendation }) | Select-Object -Unique
+            foreach ($action in $longTermActions | Select-Object -First 3) {
+                $html += @"
+                <div style="background: white; padding: 15px; margin: 10px 0; border-left: 4px solid #3498db; border-radius: 8px;">
+                    <strong>📈 $action</strong>
+                </div>
+"@
+            }
+        }
+
+        $html += @"
+            </div>
+        </div>
+"@
+    }
+
+    # Risk Assessment Summary
+    $html += @"
+        <div class="section">
+            <h2>🎯 Risk Assessment Summary</h2>
+            <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 25px; margin: 20px 0;">
+                <div style="background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; padding: 25px; border-radius: 12px;">
+                    <h3 style="margin-top: 0; color: white;">📊 Overall Risk Score</h3>
+                    <div style="font-size: 2.5em; font-weight: bold; text-align: center; margin: 20px 0;">$riskScore</div>
+                    <div style="text-align: center; font-size: 1.1em;">out of $maxPossibleScore possible</div>
+                    <div style="background: rgba(255,255,255,0.2); border-radius: 8px; padding: 15px; margin-top: 20px;">
+                        <strong>Risk Level:</strong> $(switch($riskScore) { 
+                            {$_ -le 20} {"🟢 Low Risk"} 
+                            {$_ -le 50} {"🟡 Medium Risk"} 
+                            {$_ -le 80} {"🟠 High Risk"} 
+                            default {"🔴 Critical Risk"}
+                        })
+                    </div>
+                </div>
+                
+                <div style="background: white; border: 2px solid #ecf0f1; padding: 25px; border-radius: 12px;">
+                    <h3 style="margin-top: 0; color: #2c3e50;">🔍 Key Risk Factors</h3>
+                    <ul style="list-style: none; padding: 0;">
+"@
+
+    if ($criticalGaps.Count -gt 0) {
+        $html += "<li style='margin: 10px 0; color: #e74c3c;'><strong>🔴 $($criticalGaps.Count) Critical security gaps</strong></li>"
+    }
+    if ($highGaps.Count -gt 0) {
+        $html += "<li style='margin: 10px 0; color: #f39c12;'><strong>🟠 $($highGaps.Count) High-priority issues</strong></li>"
+    }
+
+    # Add specific risk factors based on gap analysis
+    $identityGaps = $ComplianceGaps | Where-Object { $_.Category -eq "Identity Governance" }
+    if ($identityGaps.Count -gt 0) {
+        $html += "<li style='margin: 10px 0; color: #7f8c8d;'>👤 Identity governance concerns</li>"
+    }
+
+    $authGaps = $ComplianceGaps | Where-Object { $_.Category -eq "Authentication Security" }
+    if ($authGaps.Count -gt 0) {
+        $html += "<li style='margin: 10px 0; color: #7f8c8d;'>🔐 Authentication security issues</li>"
+    }
+
+    $pimGaps = $ComplianceGaps | Where-Object { $_.Category -eq "Privileged Access Management" }
+    if ($pimGaps.Count -gt 0) {
+        $html += "<li style='margin: 10px 0; color: #7f8c8d;'>🛡️ Privileged access concerns</li>"
+    }
+
+    $html += @"
+                    </ul>
+                </div>
+            </div>
+        </div>
+"@
+
+    # Recommendations Summary
+    $html += @"
+        <div class="section">
+            <h2>💡 Executive Recommendations</h2>
+            <div style="background: linear-gradient(135deg, #ffecd2 0%, #fcb69f 100%); padding: 25px; border-radius: 12px; margin: 20px 0;">
+                <h3 style="color: #2c3e50; margin-top: 0;">🎯 Top Priority Actions</h3>
+"@
+
+    # Generate top recommendations based on gap analysis
+    $recommendations = @()
+    
+    if ($criticalGaps.Count -gt 0) {
+        $recommendations += "Address $($criticalGaps.Count) critical security gaps immediately - these pose significant compliance and security risks"
+    }
+    
+    $globalAdminGaps = $ComplianceGaps | Where-Object { $_.Issue -like "*Global Administrator*" }
+    if ($globalAdminGaps.Count -gt 0) {
+        $recommendations += "Reduce Global Administrator count to comply with principle of least privilege"
+    }
+    
+    $disabledUserGaps = $ComplianceGaps | Where-Object { $_.Issue -like "*Disabled Users*" }
+    if ($disabledUserGaps.Count -gt 0) {
+        $recommendations += "Implement automated role removal for disabled accounts to prevent unauthorized access"
+    }
+    
+    $pimGaps = $ComplianceGaps | Where-Object { $_.Category -eq "Privileged Access Management" }
+    if ($pimGaps.Count -gt 0) {
+        $recommendations += "Deploy Privileged Identity Management (PIM) to reduce standing privileges"
+    }
+    
+    $authGaps = $ComplianceGaps | Where-Object { $_.Issue -like "*Client Secret*" }
+    if ($authGaps.Count -gt 0) {
+        $recommendations += "Migrate to certificate-based authentication for enhanced security"
+    }
+    
+    # Add Intune-specific recommendations if applicable
+    $intuneGaps = $ComplianceGaps | Where-Object { $_.Category -eq "Device Management" }
+    if ($intuneGaps.Count -gt 0) {
+        $recommendations += "Optimize Intune role assignments using RBAC for granular permissions"
+    }
+    
+    # Add Power Platform recommendations if applicable
+    $powerPlatformGaps = $ComplianceGaps | Where-Object { $_.Category -eq "Power Platform Governance" }
+    if ($powerPlatformGaps.Count -gt 0) {
+        $recommendations += "Review Power Platform governance and implement environment-specific controls"
+    }
+
+    foreach ($recommendation in $recommendations | Select-Object -First 6) {
+        $html += @"
+                <div style="background: rgba(255,255,255,0.8); padding: 15px; margin: 10px 0; border-radius: 8px; border-left: 4px solid #e67e22;">
+                    <strong>▶️ $recommendation</strong>
+                </div>
+"@
+    }
+
+    $html += @"
+                <div style="background: rgba(255,255,255,0.8); padding: 20px; margin: 20px 0; border-radius: 8px;">
+                    <h4 style="color: #2c3e50; margin-top: 0;">📈 Success Metrics</h4>
+                    <ul style="margin: 0; color: #34495e;">
+                        <li>Achieve 90%+ compliance score within 6 months</li>
+                        <li>Eliminate all critical and high-priority gaps</li>
+                        <li>Implement PIM for 80%+ of privileged roles</li>
+                        <li>Establish regular quarterly compliance reviews</li>
+                        <li>Deploy automated monitoring and alerting</li>
+                    </ul>
+                </div>
+            </div>
+        </div>
+"@
+
+    # Footer
+    $html += @"
+        <div class="footer">
+            <div class="generated-info">
+                <strong>Report Generated:</strong> $(Get-Date -Format 'MMMM dd, yyyy at HH:mm') | 
+                <strong>Total Gaps Analyzed:</strong> $totalGaps | 
+                <strong>Organization:</strong> $OrganizationName
+            </div>
+            <div class="disclaimer">
+                This report is generated by the M365 Role Audit PowerShell Module. 
+                Recommendations should be validated against your organization's specific compliance requirements and risk tolerance.
+                Regular audits are recommended to maintain security posture.
+            </div>
+        </div>
+"@
+
+    # Add JavaScript for charts if requested
+    if ($IncludeCharts) {
+        $html += @"
+    </div>
+    
+    <script>
+        // Severity Distribution Chart
+        const severityCtx = document.getElementById('severityChart').getContext('2d');
+        new Chart(severityCtx, {
+            type: 'doughnut',
+            data: {
+                labels: ['Critical', 'High', 'Medium', 'Low'],
+                datasets: [{
+                    data: [$($criticalGaps.Count), $($highGaps.Count), $($mediumGaps.Count), $($lowGaps.Count)],
+                    backgroundColor: ['#e74c3c', '#f39c12', '#f1c40f', '#3498db'],
+                    borderWidth: 2,
+                    borderColor: '#ffffff'
+                }]
+            },
+            options: {
+                responsive: true,
+                plugins: {
+                    legend: {
+                        position: 'bottom',
+                        labels: {
+                            padding: 20,
+                            font: {
+                                size: 14
+                            }
+                        }
+                    }
+                }
+            }
+        });
+        
+        // Category Distribution Chart
+        const categoryCtx = document.getElementById('categoryChart').getContext('2d');
+        new Chart(categoryCtx, {
+            type: 'bar',
+            data: {
+                labels: [$(($gapsByCategory | ForEach-Object { "'$($_.Name)'" }) -join ', ')],
+                datasets: [{
+                    label: 'Number of Gaps',
+                    data: [$(($gapsByCategory | ForEach-Object { $_.Count }) -join ', ')],
+                    backgroundColor: ['#667eea', '#764ba2', '#f093fb', '#f5576c', '#4facfe', '#00f2fe'],
+                    borderColor: '#ffffff',
+                    borderWidth: 2
+                }]
+            },
+            options: {
+                responsive: true,
+                scales: {
+                    y: {
+                        beginAtZero: true,
+                        ticks: {
+                            stepSize: 1
+                        }
+                    }
+                },
+                plugins: {
+                    legend: {
+                        display: false
+                    }
+                }
+            }
+        });
+        
+        // Framework Impact Chart
+         // Framework Impact Chart (FIXED for Chart.js 3.x)
+        const frameworkCtx = document.getElementById('frameworkChart').getContext('2d');
+        new Chart(frameworkCtx, {
+            type: 'bar',  // Changed from 'horizontalBar' to 'bar'
+            data: {
+                labels: [$(($frameworkImpact | Select-Object -First 8 | ForEach-Object { "'$($_.Name)'" }) -join ', ')],
+                datasets: [{
+                    label: 'Affected Controls',
+                    data: [$(($frameworkImpact | Select-Object -First 8 | ForEach-Object { $_.Count }) -join ', ')],
+                    backgroundColor: [
+                        '#667eea', '#764ba2', '#f093fb', '#f5576c', 
+                        '#4facfe', '#00f2fe', '#43e97b', '#38f9d7'
+                    ],
+                    borderColor: '#ffffff',
+                    borderWidth: 2
+                }]
+            },
+            options: {
+                responsive: true,
+                indexAxis: 'y',  // This makes the bar chart horizontal
+                scales: {
+                    x: {
+                        beginAtZero: true,
+                        ticks: {
+                            stepSize: 1
+                        }
+                    }
+                },
+                plugins: {
+                    legend: {
+                        display: false
+                    },
+                    tooltip: {
+                        callbacks: {
+                            title: function(context) {
+                                return context[0].label;
+                            },
+                            label: function(context) {
+                                return 'Gaps: ' + context.parsed.x;
+                            }
+                        }
+                    }
+                }
+            }
+        });
+    </script>
+"@
+    } else {
+        $html += @"
+    </div>
+"@
+    }
+
+    $html += @"
+</body>
+</html>
+"@
+
+    try {
+        $html | Out-File -FilePath $OutputPath -Encoding UTF8
+        Write-Host "✓ HTML Compliance Gaps report generated: $OutputPath" -ForegroundColor Green
+        
+        # Calculate file size
+        $fileSize = [math]::Round((Get-Item $OutputPath).Length / 1KB, 2)
+        Write-Host "File size: $fileSize KB" -ForegroundColor Gray
+        
+        # Display summary
+        Write-Host ""
+        Write-Host "📊 Report Summary:" -ForegroundColor Cyan
+        Write-Host "  Total Gaps: $totalGaps" -ForegroundColor White
+        Write-Host "  Compliance Score: $compliancePercentage%" -ForegroundColor $(if($compliancePercentage -ge 75) {"Green"} else {"Yellow"})
+        Write-Host "  Risk Score: $riskScore/$maxPossibleScore" -ForegroundColor $(if($riskScore -le 20) {"Green"} elseif($riskScore -le 50) {"Yellow"} else {"Red"})
+        
+        # Open report if on Windows
+        if ($IsWindows -ne $false -and (Test-Path $OutputPath)) {
+            $openReport = Read-Host "Open report in browser? (y/N)"
+            if ($openReport -eq "y" -or $openReport -eq "Y") {
+                Start-Process $OutputPath
+            }
+        }
+        
+        return $OutputPath
+    }
+    catch {
+        Write-Error "Failed to generate HTML compliance gaps report: $($_.Exception.Message)"
         return $null
     }
 }

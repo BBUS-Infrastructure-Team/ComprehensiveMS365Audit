@@ -1702,34 +1702,59 @@ function Get-RoleAssignmentsForService {
         Write-Host "Retrieving all $ServiceName assignment types..." -ForegroundColor Cyan
     }
     
-    # Get active assignments
+    # Initialize collections
+    $activeAssignments = @()
+    $pimEligibleAssignments = @()
+    $pimActiveAssignments = @()
+    
+    # Get active assignments (permanent assignments)
     if (-not $Quiet) {
         Write-Host "Getting active $ServiceName assignments..." -ForegroundColor Gray
     }
-    $activeAssignments = @()
-    foreach ($roleId in $RoleDefinitions.Id) {
-        $assignments = Get-MgRoleManagementDirectoryRoleAssignment -Filter "roleDefinitionId eq '$roleId'" -ErrorAction SilentlyContinue
-        if ($assignments) {
-            $activeAssignments += $assignments
+
+    $allAssignments = Get-MgRoleManagementDirectoryRoleAssignment -All
+    $ActiveAssignments = $allAssignments | Where-Object { $_.RoleDefinitionId -in $RoleDefinitions.id}
+    
+<#     foreach ($roleId in $RoleDefinitions.Id) {
+        try {
+            $assignments = Get-MgRoleManagementDirectoryRoleAssignment -Filter "roleDefinitionId eq '$roleId'" -ErrorAction SilentlyContinue
+            if ($assignments) {
+                $activeAssignments += $assignments
+            }
         }
-    }
+        catch {
+            Write-Verbose "Error getting active assignments for role $roleId`: $($_.Exception.Message)"
+        }
+    } #>
+    
     if (-not $Quiet) {
         Write-Host "Found $($activeAssignments.Count) active assignments" -ForegroundColor Green
     }
     
-    # Get PIM eligible assignments
-    $pimEligibleAssignments = @()
+    # Get PIM assignments if requested
     if ($IncludePIM) {
+        # Get PIM eligible assignments
         try {
+
+            $allPimAssignments = Get-MgRoleManagementDirectoryRoleEligibilitySchedule -All
+            $pimEligibleAssignments = $allPimAssignments | Where-Object {$_.RoleDefinitionId -in $RoleDefinitions.Id}
+
             if (-not $Quiet) {
                 Write-Host "Getting PIM eligible $ServiceName assignments..." -ForegroundColor Gray
             }
-            foreach ($roleId in $RoleDefinitions.Id) {
-                $pimEligible = Get-MgRoleManagementDirectoryRoleEligibilitySchedule -Filter "roleDefinitionId eq '$roleId'" -ErrorAction SilentlyContinue
-                if ($pimEligible) {
-                    $pimEligibleAssignments += $pimEligible
+            
+<#             foreach ($roleId in $RoleDefinitions.Id) {
+                try {
+                    $pimEligible = Get-MgRoleManagementDirectoryRoleEligibilitySchedule -Filter "roleDefinitionId eq '$roleId'" -ErrorAction SilentlyContinue
+                    if ($pimEligible) {
+                        $pimEligibleAssignments += $pimEligible
+                    }
                 }
-            }
+                catch {
+                    Write-Verbose "Error getting PIM eligible assignments for role $roleId`: $($_.Exception.Message)"
+                }
+            } #>
+            
             if (-not $Quiet) {
                 Write-Host "Found $($pimEligibleAssignments.Count) PIM eligible assignments" -ForegroundColor Green
             }
@@ -1739,21 +1764,29 @@ function Get-RoleAssignmentsForService {
                 Write-Host "Could not retrieve PIM eligible assignments (may not be licensed)" -ForegroundColor Yellow
             }
         }
-    }
-    
-    # Get PIM active assignments
-    $pimActiveAssignments = @()
-    if ($IncludePIM) {
+        
+        # Get PIM active assignments
         try {
             if (-not $Quiet) {
                 Write-Host "Getting PIM active $ServiceName assignments..." -ForegroundColor Gray
             }
-            foreach ($roleId in $RoleDefinitions.Id) {
-                $pimActive = Get-MgRoleManagementDirectoryRoleAssignmentSchedule -Filter "roleDefinitionId eq '$roleId'" -ErrorAction SilentlyContinue
-                if ($pimActive) {
-                    $pimActiveAssignments += $pimActive
+
+            $allPimActiveAssignments = Get-MgRoleManagementDirectoryRoleAssignmentSchedule -All
+
+            $pimActiveAssignments = $allPimActiveAssignments | Where-Object{ $_.RoleDefinitionId -in $RoleDefinitions.Id}
+            
+<#             foreach ($roleId in $RoleDefinitions.Id) {
+                try {
+                    $pimActive = Get-MgRoleManagementDirectoryRoleAssignmentSchedule -Filter "roleDefinitionId eq '$roleId'" -ErrorAction SilentlyContinue
+                    if ($pimActive) {
+                        $pimActiveAssignments += $pimActive
+                    }
+                }
+                catch {
+                    Write-Verbose "Error getting PIM active assignments for role $roleId`: $($_.Exception.Message)"
                 }
             }
+             #>
             if (-not $Quiet) {
                 Write-Host "Found $($pimActiveAssignments.Count) PIM active assignments" -ForegroundColor Green
             }
@@ -1765,15 +1798,419 @@ function Get-RoleAssignmentsForService {
         }
     }
     
-    # Combine all assignments with source tagging
-    $allAssignments = @()
-    $allAssignments += $activeAssignments | ForEach-Object { $_ | Add-Member -NotePropertyName "AssignmentSource" -NotePropertyValue "Active" -PassThru }
-    $allAssignments += $pimEligibleAssignments | ForEach-Object { $_ | Add-Member -NotePropertyName "AssignmentSource" -NotePropertyValue "PIMEligible" -PassThru }
-    $allAssignments += $pimActiveAssignments | ForEach-Object { $_ | Add-Member -NotePropertyName "AssignmentSource" -NotePropertyValue "PIMActive" -PassThru }
+    # ========= CRITICAL FIX: PROPER DEDUPLICATION LOGIC =========
+    # The issue is that PIM active assignments can appear in both regular active assignments 
+    # AND PIM active assignments. We need to deduplicate properly.
+    
+    # Create a hashtable to track unique assignments by a composite key
+    $uniqueAssignments = @{}
+    $duplicateCount = 0
+    
+    # Add active assignments first
+    foreach ($assignment in $activeAssignments) {
+        $key = "$($assignment.PrincipalId)|$($assignment.RoleDefinitionId)|$($assignment.DirectoryScopeId)"
+        
+        if (-not $uniqueAssignments.ContainsKey($key)) {
+            $assignment | Add-Member -NotePropertyName "AssignmentSource" -NotePropertyValue "Active" -Force
+            $uniqueAssignments[$key] = $assignment
+        } else {
+            $duplicateCount++
+            Write-Verbose "Duplicate active assignment found: $key"
+        }
+    }
+    
+    # Add PIM eligible assignments (these should be unique from active)
+    foreach ($assignment in $pimEligibleAssignments) {
+        $key = "$($assignment.PrincipalId)|$($assignment.RoleDefinitionId)|$($assignment.DirectoryScopeId)"
+        
+        if (-not $uniqueAssignments.ContainsKey($key)) {
+            $assignment | Add-Member -NotePropertyName "AssignmentSource" -NotePropertyValue "PIMEligible" -Force
+            $uniqueAssignments[$key] = $assignment
+        } else {
+            $duplicateCount++
+            Write-Verbose "Duplicate PIM eligible assignment found: $key"
+        }
+    }
+    
+    # Add PIM active assignments - these might overlap with regular active assignments
+    foreach ($assignment in $pimActiveAssignments) {
+        $key = "$($assignment.PrincipalId)|$($assignment.RoleDefinitionId)|$($assignment.DirectoryScopeId)"
+        
+        if (-not $uniqueAssignments.ContainsKey($key)) {
+            # New assignment - add as PIM active
+            $assignment | Add-Member -NotePropertyName "AssignmentSource" -NotePropertyValue "PIMActive" -Force
+            $uniqueAssignments[$key] = $assignment
+        } else {
+            # Duplicate found - prefer PIM active over regular active
+            $existing = $uniqueAssignments[$key]
+            if ($existing.AssignmentSource -eq "Active") {
+                # Replace regular active with PIM active (more specific)
+                $assignment | Add-Member -NotePropertyName "AssignmentSource" -NotePropertyValue "PIMActive" -Force
+                $uniqueAssignments[$key] = $assignment
+                $duplicateCount++
+                Write-Verbose "Replaced active assignment with PIM active: $key"
+            } else {
+                # Keep existing (eligible or already PIM active)
+                $duplicateCount++
+                Write-Verbose "Duplicate PIM active assignment found: $key"
+            }
+        }
+    }
+    
+    # Convert hashtable values back to array
+    $allAssignments = @($uniqueAssignments.Values)
     
     if (-not $Quiet) {
-        Write-Host "Total $ServiceName assignments across all types: $($allAssignments.Count)" -ForegroundColor Green
+        Write-Host "Total $ServiceName assignments after deduplication: $($allAssignments.Count)" -ForegroundColor Green
+        if ($duplicateCount -gt 0) {
+            Write-Host "  Removed $duplicateCount duplicate assignments during processing" -ForegroundColor Yellow
+        }
+        
+        # Show breakdown by assignment source
+        $sourceBreakdown = $allAssignments | Group-Object AssignmentSource | Sort-Object Name
+        Write-Host "  Assignment source breakdown:" -ForegroundColor Cyan
+        foreach ($source in $sourceBreakdown) {
+            Write-Host "    $($source.Name): $($source.Count)" -ForegroundColor White
+        }
     }
     
     return $allAssignments
+}
+
+function ConvertTo-ServiceAssignmentResults {
+    param(
+        [Parameter(Mandatory = $true)]
+        [array]$Assignments,
+        
+        [Parameter(Mandatory = $true)]
+        [array]$RoleDefinitions,
+        
+        [Parameter(Mandatory = $true)]
+        [string]$ServiceName,
+        
+        [Parameter(Mandatory = $true)]
+        [array]$OverarchingRoles,
+        
+        [string]$DefaultAssignmentType = "Undefined",
+        [bool]$IncludeAllPrincipalTypes = $true,
+        [switch]$IncludeUnknownPrincipals,
+        [switch]$Quiet
+    )
+    
+    $results = @()
+    
+    if ($Assignments.Count -eq 0) {
+        if (-not $Quiet) { Write-Verbose "No assignments provided for $ServiceName" }
+        return $results
+    }
+    
+    if (-not $Quiet) {
+        Write-Host "Processing $($Assignments.Count) $ServiceName assignments with optimized batch filtering..." -ForegroundColor Cyan
+    }
+    
+    # Create role definition lookup hashtable for performance
+    $roleDefinitionHash = @{}
+    foreach ($roleDef in $RoleDefinitions) {
+        $roleDefinitionHash[$roleDef.Id] = $roleDef
+    }
+    
+    # Get unique principal IDs and resolve them using your optimized batch approach
+    $uniquePrincipalIds = @($Assignments | Select-Object -ExpandProperty PrincipalId -Unique)
+    if (-not $Quiet) {
+        Write-Host "  Resolving $($uniquePrincipalIds.Count) unique principals using your optimized batch filtering..." -ForegroundColor Gray
+    }
+    
+    # Initialize principal cache and counters
+    $principalCache = @{}
+    $userResolvedCount = 0
+    $groupResolvedCount = 0
+    $servicePrincipalResolvedCount = 0
+    $unknownPrincipalCount = 0
+    
+    $batchSize = 15
+    
+    # ========= USER RESOLUTION USING YOUR EXACT PATTERN =========
+    if (-not $Quiet) {
+        Write-Host "    Batch resolving users..." -ForegroundColor Gray
+    }
+    
+    $allUsers = for ($i = 0; $i -lt $uniquePrincipalIds.Count; $i += $batchSize) {
+        $batch = $uniquePrincipalIds[$i..([Math]::Min($i + $batchSize - 1, $uniquePrincipalIds.Count - 1))]
+        $filter = "id in ('" + ($batch -join "','") + "')"
+        Get-MgUser -Filter $filter -Property "Id,UserPrincipalName,DisplayName,AccountEnabled,OnPremisesSyncEnabled" -ErrorAction SilentlyContinue
+    }
+    
+    # Cache all resolved users
+    foreach ($user in $allUsers) {
+        if ($user) {
+            $principalCache[$user.Id] = @{
+                Type = "User"
+                UserPrincipalName = $user.UserPrincipalName
+                DisplayName = $user.DisplayName
+                AccountEnabled = $user.AccountEnabled
+                OnPremisesSyncEnabled = $user.OnPremisesSyncEnabled
+            }
+            $userResolvedCount++
+        }
+    }
+    
+    # ========= GROUP RESOLUTION USING YOUR EXACT PATTERN =========
+    if ($IncludeAllPrincipalTypes) {
+        $unresolvedPrincipals = $uniquePrincipalIds | Where-Object { -not $principalCache.ContainsKey($_) }
+        
+        if ($unresolvedPrincipals.Count -gt 0) {
+            if (-not $Quiet) {
+                Write-Host "    Batch resolving $($unresolvedPrincipals.Count) remaining principals as groups..." -ForegroundColor Gray
+            }
+            
+            $allGroups = for ($i = 0; $i -lt $unresolvedPrincipals.Count; $i += $batchSize) {
+                $batch = $unresolvedPrincipals[$i..([Math]::Min($i + $batchSize - 1, $unresolvedPrincipals.Count - 1))]
+                $filter = "id in ('" + ($batch -join "','") + "')"
+                Get-MgGroup -Filter $filter -Property "Id,Mail,DisplayName,OnPremisesSyncEnabled" -ErrorAction SilentlyContinue
+            }
+            
+            # Cache all resolved groups
+            foreach ($group in $allGroups) {
+                if ($group) {
+                    $principalCache[$group.Id] = @{
+                        Type = "Group"
+                        UserPrincipalName = if ($group.Mail) { $group.Mail } else { $group.DisplayName }
+                        DisplayName = "$($group.DisplayName) (Group)"
+                        AccountEnabled = $null
+                        OnPremisesSyncEnabled = $group.OnPremisesSyncEnabled
+                    }
+                    $groupResolvedCount++
+                }
+            }
+        }
+        
+        # ========= SERVICE PRINCIPAL RESOLUTION USING YOUR EXACT PATTERN =========
+        $unresolvedPrincipals = $uniquePrincipalIds | Where-Object { -not $principalCache.ContainsKey($_) }
+        
+        if ($unresolvedPrincipals.Count -gt 0) {
+            if (-not $Quiet) {
+                Write-Host "    Batch resolving $($unresolvedPrincipals.Count) remaining principals as service principals..." -ForegroundColor Gray
+            }
+            
+            $allServicePrincipals = for ($i = 0; $i -lt $unresolvedPrincipals.Count; $i += $batchSize) {
+                $batch = $unresolvedPrincipals[$i..([Math]::Min($i + $batchSize - 1, $unresolvedPrincipals.Count - 1))]
+                $filter = "id in ('" + ($batch -join "','") + "')"
+                Get-MgServicePrincipal -Filter $filter -Property "Id,AppId,DisplayName,AccountEnabled" -ErrorAction SilentlyContinue
+            }
+            
+            # Cache all resolved service principals
+            foreach ($sp in $allServicePrincipals) {
+                if ($sp) {
+                    $principalCache[$sp.Id] = @{
+                        Type = "ServicePrincipal"
+                        UserPrincipalName = $sp.AppId
+                        DisplayName = "$($sp.DisplayName) (Application)"
+                        AccountEnabled = $sp.AccountEnabled
+                        OnPremisesSyncEnabled = $false
+                    }
+                    $servicePrincipalResolvedCount++
+                }
+            }
+        }
+    }
+    
+    # Mark remaining principals as unknown
+    $unresolvedPrincipals = $uniquePrincipalIds | Where-Object { -not $principalCache.ContainsKey($_) }
+    foreach ($principalId in $unresolvedPrincipals) {
+        $principalCache[$principalId] = @{
+            Type = "Unknown"
+            UserPrincipalName = "Unknown-$principalId"
+            DisplayName = "Unknown Principal"
+            AccountEnabled = $null
+            OnPremisesSyncEnabled = $null
+        }
+        $unknownPrincipalCount++
+    }
+    
+    # ========= OPTIMIZE: FILTER PRINCIPAL CACHE UPFRONT INSTEAD OF IN LOOP =========
+    $originalCacheSize = $principalCache.Count
+    $unknownPrincipalFilteredCount = 0
+    $nonUserPrincipalFilteredCount = 0
+    
+    # Filter unknown principals if not including them
+    if (-not $IncludeUnknownPrincipals) {
+        $unknownPrincipals = $principalCache.GetEnumerator() | Where-Object { $_.Value.Type -eq "Unknown" }
+        $unknownPrincipalFilteredCount = $unknownPrincipals.Count
+        
+        foreach ($unknownPrincipal in $unknownPrincipals) {
+            $principalCache.Remove($unknownPrincipal.Key)
+        }
+    }
+    
+    # Filter non-users if not including all principal types
+    if (-not $IncludeAllPrincipalTypes) {
+        $nonUserPrincipals = $principalCache.GetEnumerator() | Where-Object { $_.Value.Type -ne "User" }
+        $nonUserPrincipalFilteredCount = $nonUserPrincipals.Count
+        
+        foreach ($nonUserPrincipal in $nonUserPrincipals) {
+            $principalCache.Remove($nonUserPrincipal.Key)
+        }
+    }
+    
+    if (-not $Quiet) {
+        Write-Host "  ✓ Principal resolution completed - Users: $userResolvedCount, Groups: $groupResolvedCount, SPs: $servicePrincipalResolvedCount, Unknown: $unknownPrincipalCount" -ForegroundColor Green
+        Write-Host "  ✓ Cache optimized - Original: $originalCacheSize, Filtered: $($principalCache.Count) (Removed: Unknown=$unknownPrincipalFilteredCount, NonUser=$nonUserPrincipalFilteredCount)" -ForegroundColor Cyan
+    }
+    
+    # ========= FAST ASSIGNMENT PROCESSING USING FILTERED CACHED PRINCIPALS =========
+    $processedCount = 0
+    
+    foreach ($assignment in $Assignments) {
+        try {
+            $processedCount++
+            
+            # Progress indicator (less frequent for performance)
+            if (-not $Quiet -and $processedCount % 50 -eq 0) {
+                Write-Host "  Processed $processedCount of $($Assignments.Count) assignments..." -ForegroundColor Gray
+            }
+            
+            # Get role definition (cached lookup)
+            $role = $roleDefinitionHash[$assignment.RoleDefinitionId]
+            if (-not $role) {
+                Write-Verbose "Unknown role definition: $($assignment.RoleDefinitionId)"
+                continue
+            }
+            
+            # Get principal info from filtered cache (no API calls needed)
+            $principalInfo = $principalCache[$assignment.PrincipalId]
+            if (-not $principalInfo) {
+                # Principal was filtered out or doesn't exist - skip silently
+                continue
+            }
+            
+            # Determine assignment type
+            $assignmentType = switch ($assignment.AssignmentSource) {
+                "Active" { "Active" }
+                "PIMEligible" { "Eligible (PIM)" }
+                "PIMActive" { "Active (PIM)" }
+                default { $DefaultAssignmentType }
+            }
+            
+            # Determine role scope
+            $roleScope = if ($role.DisplayName -in $OverarchingRoles) { "Overarching" } else { "Service-Specific" }
+            
+            # Create result object
+            $results += [PSCustomObject]@{
+                Service = $ServiceName
+                UserPrincipalName = $principalInfo.UserPrincipalName
+                DisplayName = $principalInfo.DisplayName
+                UserId = $assignment.PrincipalId
+                RoleName = $role.DisplayName
+                RoleDefinitionId = $assignment.RoleDefinitionId
+                RoleScope = $roleScope
+                AssignmentType = $assignmentType
+                AssignedDateTime = $assignment.CreatedDateTime
+                UserEnabled = $principalInfo.AccountEnabled
+                Scope = $assignment.DirectoryScopeId
+                AssignmentId = $assignment.Id
+                PrincipalType = $principalInfo.Type
+                OnPremisesSyncEnabled = $principalInfo.OnPremisesSyncEnabled
+                PIMStartDateTime = if ($assignment.ScheduleInfo) { $assignment.ScheduleInfo.StartDateTime } else { $null }
+                PIMEndDateTime = if ($assignment.ScheduleInfo -and $assignment.ScheduleInfo.Expiration) { $assignment.ScheduleInfo.Expiration.EndDateTime } else { $null }
+            }
+            
+        }
+        catch {
+            Write-Warning "Error processing $ServiceName assignment $($assignment.Id): $($_.Exception.Message)"
+            continue
+        }
+    }
+    
+    # Final summary
+    if (-not $Quiet) {
+        Write-Host "✓ $ServiceName assignment processing completed with your optimized batch filtering" -ForegroundColor Green
+        Write-Host "  Results: $($results.Count) assignments processed" -ForegroundColor White
+        Write-Host "  Performance: Used batch principal resolution for $($uniquePrincipalIds.Count) unique principals" -ForegroundColor Cyan
+        
+        if ($unknownPrincipalFilteredCount -gt 0) {
+            Write-Host "  Filtered out: $unknownPrincipalFilteredCount unknown principals" -ForegroundColor Green
+        }
+        
+        if ($results.Count -gt 0) {
+            $assignmentTypeBreakdown = $results | Group-Object AssignmentType
+            Write-Host "  Assignment types:" -ForegroundColor Cyan
+            foreach ($type in $assignmentTypeBreakdown) {
+                Write-Host "    $($type.Name): $($type.Count)" -ForegroundColor White
+            }
+        }
+        
+        if ($unknownPrincipalFilteredCount -gt 10) {
+            Write-Host ""
+            Write-Host "💡 RECOMMENDATION: Consider cleaning up $unknownPrincipalFilteredCount orphaned role assignments" -ForegroundColor Yellow
+            Write-Host "   Use -IncludeUnknownPrincipals to see the full list for cleanup" -ForegroundColor White
+        }
+    }
+    
+    return $results
+}
+
+function Get-RoleGroupMemberResult () {
+    Param (
+        [psObject]$Member,
+        [string]$Service,
+        [psObject]$RoleGroup
+    )
+
+    $recipientType = $member.RecipientType
+    $isUser = $recipientType -in @("UserMailbox", "MailUser", "User")
+    $isGroup = $recipientType -in @("MailUniversalSecurityGroup", "UniversalSecurityGroup", "MailUniversalDistributionGroup", "Group")
+    
+    if ($isUser -or $isGroup) {
+        $principalType = if ($isUser) { "User" } else { "Group" } 
+        
+        # Try to get additional user info from Graph for consistency
+        $userEnabled = $null
+        $lastSignIn = $null
+        $onPremisesSyncEnabled = $null
+        
+        if ($isUser) {
+            try {
+                # First we have to get the user ID because we are using a filter
+                $userId = (Get-MgUser -Filter "DisplayName eq '$($member.DisplayName)'").Id
+                # Now we can get the graph user and the properties we need using the user ID
+                if ($userId) {
+                    $graphUser = Get-MgUser -UserId $UserId -Property Id, UserPrincipalName, AccountEnabled, OnPremisesSyncEnabled -ErrorAction SilentlyContinue
+                }
+                if ($graphUser) {
+                    $userEnabled = $graphUser.AccountEnabled
+                    $userPrincipalName = $graphUser.UserPrincipalName
+                    #$lastSignIn = $graphUser.SignInActivity.LastSignInDateTime
+                    $onPremisesSyncEnabled = $graphUser.OnPremisesSyncEnabled
+                } else {
+                    $userPrincipalName = "Unable to retrieve Entra ID user"
+                }
+            }
+            catch {
+                Write-Verbose "Could not retrieve Graph data for compliance user $($member.PrimarySmtpAddress): $($_.Exception.Message)"
+            }
+        } 
+        
+        $result = [PSCustomObject]@{
+            Service = $Service
+            UserPrincipalName = $userPrincipalName
+            DisplayName = $member.DisplayName
+            UserId = $UserId
+            RoleName = $roleGroup.Name
+            RoleDefinitionId = $roleGroup.Guid
+            RoleScope = "Service-Specific"  # Compliance role groups are service-specific
+            AssignmentType = "Role Group Member"
+            AssignedDateTime = $null
+            UserEnabled = $userEnabled
+            Scope = "Organization"
+            AssignmentId = $roleGroup.Identity
+            PrincipalType = $principalType
+            OnPremisesSyncEnabled = $onPremisesSyncEnabled
+            PIMStartDateTime = $null
+            PIMEndDateTime = $null
+        }
+    }
+    if ($null -eq $result) {
+            Throw "Cannot identify Principal! Name: $($member.Name), RecipientType: $($member.RecipientType)"
+    }
+    return $result
 }

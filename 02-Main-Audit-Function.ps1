@@ -11,7 +11,7 @@ function Get-ComprehensiveM365RoleAudit {
         [Parameter(Mandatory = $False)]
         [string]$Organization,  # Required for Exchange and Compliance
 
-        [switch]$IncludePIM,
+        [bool]$IncludePIM = $true,
         [switch]$IncludeExchange,
         [switch]$IncludeSharePoint,
         [switch]$IncludeTeams,
@@ -46,7 +46,7 @@ function Get-ComprehensiveM365RoleAudit {
         } else {
             Write-Host "Service audits will exclude overarching roles (clean separation)" -ForegroundColor Green
         }
-        Write-Host ""
+        
         
         # Validate required parameters
         if ($IncludeExchange -or $IncludePurview -or $IncludeAll) {
@@ -73,14 +73,14 @@ function Get-ComprehensiveM365RoleAudit {
         if ($Organization) {
             Write-Host "Exchange Organization: $Organization" -ForegroundColor Cyan
         }
-        Write-Host ""
+        
         
         # === 1. AZURE AD/ENTRA ID ROLES (ALWAYS INCLUDED WITH ALL ROLES) ===
         Write-Host "Auditing Azure AD/Entra ID roles (including all overarching roles)..." -ForegroundColor Cyan
-        $azureADRoles = Get-AzureADRoleAudit -IncludePIM:$IncludePIM -TenantId $TenantId -ClientId $ClientId -CertificateThumbprint $CertificateThumbprint
+        $azureADRoles = Get-AzureADRoleAudit -TenantId $TenantId -ClientId $ClientId -CertificateThumbprint $CertificateThumbprint 
         $allResults += $azureADRoles
         Write-Host "✓ Found $($azureADRoles.Count) Azure AD role assignments" -ForegroundColor Green
-        
+       
         # === 2. SERVICE-SPECIFIC AUDITS (EXCLUDE OVERARCHING ROLES BY DEFAULT) ===
         
         # SharePoint Online Roles
@@ -148,16 +148,16 @@ function Get-ComprehensiveM365RoleAudit {
             }
         }
         
-        # # Microsoft Intune/Endpoint Manager Roles
-        # if ($IncludeIntune -or $IncludeAll) {
-        #     Write-Host "Auditing Microsoft Intune/Endpoint Manager roles..." -ForegroundColor Cyan
-        #     $intuneRoles = Get-IntuneRoleAudit -TenantId $TenantId -ClientId $ClientId -CertificateThumbprint $CertificateThumbprint -IncludePIM:$IncludePIM -IncludeAzureADRoles:$IncludeOverarchingRolesInServices
-        #     $allResults += $intuneRoles
-        #     Write-Host "✓ Found $($intuneRoles.Count) Intune role assignments" -ForegroundColor Green
-        #     if (-not $IncludeOverarchingRolesInServices) {
-        #         Write-Host "  (Excluding overarching Azure AD roles to prevent duplicates)" -ForegroundColor Gray
-        #     }
-        # }
+        # Microsoft Intune/Endpoint Manager Roles
+        if ($IncludeIntune -or $IncludeAll) {
+            Write-Host "Auditing Microsoft Intune/Endpoint Manager roles..." -ForegroundColor Cyan
+            $intuneRoles = Get-IntuneRoleAudit -TenantId $TenantId -ClientId $ClientId -CertificateThumbprint $CertificateThumbprint -IncludePIM:$IncludePIM -IncludeAzureADRoles:$IncludeOverarchingRolesInServices
+            $allResults += $intuneRoles
+            Write-Host "✓ Found $($intuneRoles.Count) Intune role assignments" -ForegroundColor Green
+            if (-not $IncludeOverarchingRolesInServices) {
+                Write-Host "  (Excluding overarching Azure AD roles to prevent duplicates)" -ForegroundColor Gray
+            }
+        }
         
         # Power Platform Roles
         if ($IncludePowerPlatform -or $IncludeAll) {
@@ -179,7 +179,7 @@ function Get-ComprehensiveM365RoleAudit {
         
         # === 3. OPTIONAL DEDUPLICATION (NOT RECOMMENDED WITH PROPER FILTERING) ===
         # if ($DeduplicationMode -ne "None" -and $allResults.Count -gt 0) {
-        #     Write-Host ""
+        #     
         #     Write-Host "=== APPLYING OPTIONAL DEDUPLICATION ===" -ForegroundColor Yellow
         #     Write-Host "WARNING: Deduplication should not be needed with proper role filtering!" -ForegroundColor Yellow
         #     Write-Host "Consider using -IncludeOverarchingRolesInServices:$false for cleaner results" -ForegroundColor Yellow
@@ -198,7 +198,7 @@ function Get-ComprehensiveM365RoleAudit {
         #     $deduplicatedCount = $allResults.Count
         #     $removedCount = $originalCount - $deduplicatedCount
             
-        #     Write-Host ""
+        #     
         #     Write-Host "Deduplication Summary:" -ForegroundColor Yellow
         #     Write-Host "  Original: $originalCount assignments" -ForegroundColor White
         #     Write-Host "  Final: $deduplicatedCount assignments" -ForegroundColor White
@@ -215,9 +215,8 @@ function Get-ComprehensiveM365RoleAudit {
         if ($allResults.Count -gt 0) {
             if ($ExportPath) {
                 # $allResults | Export-Csv -Path $ExportPath -NoTypeInformation
-            }
-            ""
-            Write-Host ""
+            }            
+            
             Write-Host "=== AUDIT COMPLETED SUCCESSFULLY ===" -ForegroundColor Green
             Write-Host "Total role assignments found: $($allResults.Count)" -ForegroundColor Green
             
@@ -232,12 +231,12 @@ function Get-ComprehensiveM365RoleAudit {
                 Write-Host "Authentication used: Certificate-based" -ForegroundColor Cyan
                 
                 # === 5. ENHANCED SUMMARY ANALYSIS ===
-                Write-Host ""
+                
                 Write-Host "=== COMPREHENSIVE SUMMARY ANALYSIS ===" -ForegroundColor Cyan
                 
                 # Service distribution
                 $serviceSummary = $allResults | Group-Object Service | Sort-Object Count -Descending
-                Write-Host ""
+                
                 Write-Host "Service Distribution:" -ForegroundColor Yellow
                 foreach ($service in $serviceSummary) {
                     $percentage = [math]::Round(($service.Count / $allResults.Count) * 100, 1)
@@ -245,7 +244,7 @@ function Get-ComprehensiveM365RoleAudit {
                 }
                 
                 # Authentication analysis
-                Write-Host ""
+                
                 Write-Host "Authentication Type Analysis:" -ForegroundColor Yellow
                 $authSummary = $allResults | Group-Object AuthenticationType | Sort-Object Count -Descending
                 foreach ($authType in $authSummary) {
@@ -255,7 +254,7 @@ function Get-ComprehensiveM365RoleAudit {
                 }
                 
                 # Assignment type analysis
-                Write-Host ""
+                
                 Write-Host "Assignment Type Distribution:" -ForegroundColor Yellow
                 $assignmentTypeSummary = $allResults | Group-Object AssignmentType | Sort-Object Count -Descending
                 foreach ($assignmentType in $assignmentTypeSummary) {
@@ -265,7 +264,7 @@ function Get-ComprehensiveM365RoleAudit {
                 }
                 
                 # Top roles across all services
-                Write-Host ""
+                
                 Write-Host "Top Roles Across All Services:" -ForegroundColor Yellow
                 $roleSummary = $allResults | Group-Object RoleName | Sort-Object Count -Descending | Select-Object -First 15
                 foreach ($role in $roleSummary) {
@@ -275,7 +274,7 @@ function Get-ComprehensiveM365RoleAudit {
                 }
                 
                 # User analysis
-                Write-Host ""
+                
                 Write-Host "Users with Most Role Assignments:" -ForegroundColor Yellow
                 $userSummary = $allResults | Where-Object { $_.UserPrincipalName -and $_.UserPrincipalName -ne "Unknown" } | 
                             Group-Object UserPrincipalName | Sort-Object Count -Descending | Select-Object -First 10
@@ -285,7 +284,7 @@ function Get-ComprehensiveM365RoleAudit {
                 }
                 
                 # === 6. SECURITY AND PIM ANALYSIS ===
-                Write-Host ""
+                
                 Write-Host "=== SECURITY ANALYSIS ===" -ForegroundColor Cyan
                 
                 # Global administrators
@@ -314,7 +313,7 @@ function Get-ComprehensiveM365RoleAudit {
                     $_.AssignmentType -eq "Intune RBAC"
                 }
                 
-                Write-Host ""
+                
                 Write-Host "Privileged Identity Management (PIM) Analysis:" -ForegroundColor Yellow
                 Write-Host "  PIM Eligible Assignments: $($pimEligible.Count)" -ForegroundColor $(if($pimEligible.Count -gt 0) {"Green"} else {"Yellow"})
                 Write-Host "  PIM Active Assignments: $($pimActive.Count)" -ForegroundColor White
@@ -328,13 +327,13 @@ function Get-ComprehensiveM365RoleAudit {
                 }
                 
                 # === 7. SERVICE-SPECIFIC INSIGHTS ===
-                Write-Host ""
+                
                 Write-Host "=== SERVICE-SPECIFIC INSIGHTS ===" -ForegroundColor Cyan
                 
                 # Intune analysis
                 $intuneResults = $allResults | Where-Object { $_.Service -eq "Microsoft Intune" }
                 if ($intuneResults.Count -gt 0) {
-                    Write-Host ""
+                    
                     Write-Host "Microsoft Intune Analysis:" -ForegroundColor Yellow
                     $intuneServiceAdmins = $intuneResults | Where-Object { $_.RoleName -eq "Intune Service Administrator" }
                     $intuneRBACAssignments = $intuneResults | Where-Object { $_.RoleType -eq "IntuneRBAC" }
@@ -355,7 +354,7 @@ function Get-ComprehensiveM365RoleAudit {
                 # Exchange analysis
                 $exchangeResults = $allResults | Where-Object { $_.Service -eq "Exchange Online" }
                 if ($exchangeResults.Count -gt 0) {
-                    Write-Host ""
+                    
                     Write-Host "Exchange Online Analysis:" -ForegroundColor Yellow
                     $orgManagement = $exchangeResults | Where-Object { $_.RoleName -eq "Organization Management" }
                     $roleGroups = $exchangeResults | Where-Object { $_.AssignmentType -eq "Role Group Member" }
@@ -375,7 +374,7 @@ function Get-ComprehensiveM365RoleAudit {
                 # SharePoint analysis
                 $sharePointResults = $allResults | Where-Object { $_.Service -eq "SharePoint Online" }
                 if ($sharePointResults.Count -gt 0) {
-                    Write-Host ""
+                    
                     Write-Host "SharePoint Online Analysis:" -ForegroundColor Yellow
                     $siteAdmins = $sharePointResults | Where-Object { $_.RoleName -like "*Site*Administrator*" }
                     $appCatalogAdmins = $sharePointResults | Where-Object { $_.RoleName -eq "App Catalog Administrator" }
@@ -387,7 +386,7 @@ function Get-ComprehensiveM365RoleAudit {
                 }
                 
                 # === 8. RECOMMENDATIONS ===
-                Write-Host ""
+                
                 Write-Host "=== SECURITY RECOMMENDATIONS ===" -ForegroundColor Green
                 
                 $recommendations = @()
@@ -440,7 +439,7 @@ function Get-ComprehensiveM365RoleAudit {
                 }
                 
                 if ($positiveFindings.Count -gt 0) {
-                    Write-Host ""
+                    
                     Write-Host "Positive Security Findings:" -ForegroundColor Green
                     foreach ($finding in $positiveFindings) {
                         Write-Host "  $finding" -ForegroundColor White
@@ -448,7 +447,7 @@ function Get-ComprehensiveM365RoleAudit {
                 }
                 
                 # General recommendations
-                Write-Host ""
+                
                 Write-Host "General Security Best Practices:" -ForegroundColor Cyan
                 Write-Host "• Implement regular access reviews for privileged roles" -ForegroundColor White
                 Write-Host "• Enable PIM for eligible assignments to reduce standing privileges" -ForegroundColor White
@@ -458,7 +457,7 @@ function Get-ComprehensiveM365RoleAudit {
                 Write-Host "• Use service-specific RBAC roles instead of broad administrative roles" -ForegroundColor White
                 
                 # === 9. ENHANCED REPORTING OPTIONS ===
-                Write-Host ""
+                
                 Write-Host "=== ENHANCED REPORTING OPTIONS ===" -ForegroundColor Cyan
                 Write-Host "PowerShell Commands for Additional Analysis:" -ForegroundColor Yellow
                 Write-Host "• Export-M365AuditHtmlReport -AuditResults `$results" -ForegroundColor White
@@ -467,7 +466,7 @@ function Get-ComprehensiveM365RoleAudit {
                 Write-Host "• Get-M365RoleAnalysis -AuditResults `$results" -ForegroundColor White
                 Write-Host "• Get-M365ComplianceGaps -AuditResults `$results" -ForegroundColor White
                 
-                Write-Host ""
+                
                 Write-Host "✓ Enhanced comprehensive audit completed successfully!" -ForegroundColor Green
                 Write-Host "No deduplication required with proper role filtering architecture" -ForegroundColor Green
             }
@@ -485,7 +484,7 @@ function Get-ComprehensiveM365RoleAudit {
         
         # Enhanced troubleshooting guidance
         if ($_.Exception.Message -like "*certificate*") {
-            Write-Host ""
+            Write-Host "================================================================="
             Write-Host "Certificate troubleshooting:" -ForegroundColor Yellow
             Write-Host "• Verify certificate exists in Windows Certificate Store" -ForegroundColor White
             Write-Host "• Check certificate expiration date" -ForegroundColor White
@@ -493,7 +492,7 @@ function Get-ComprehensiveM365RoleAudit {
             Write-Host "• Run: Get-M365AuditCurrentConfig to verify setup" -ForegroundColor White
         }
         elseif ($_.Exception.Message -like "*permission*" -or $_.Exception.Message -like "*access*") {
-            Write-Host ""
+            
             Write-Host "Permission troubleshooting:" -ForegroundColor Yellow
             Write-Host "• Run: Get-M365AuditRequiredPermissions" -ForegroundColor White
             Write-Host "• Verify admin consent has been granted in Azure AD" -ForegroundColor White

@@ -109,67 +109,19 @@ function Get-SharePointRoleAudit {
             $roleDefinitions = Get-MgRoleManagementDirectoryRoleDefinition -All | Where-Object { $_.DisplayName -in $rolesToInclude }
             Write-Host "Found $($roleDefinitions.Count) SharePoint-related administrative role definitions" -ForegroundColor Green
 
-            $allAssignments = Get-RoleAssignmentsForService -RoleDefinitions $roleDefinitions -ServiceName "SharePoint" -IncludePIM
+            $allAssignments = Get-RoleAssignmentsForService -RoleDefinitions $roleDefinitions -ServiceName "SharePoint" -IncludePIM 
 
-<#             
-            # FIX 2: Get ALL assignment types (Active, PIM Eligible, PIM Active)
-            Write-Host "Retrieving all SharePoint assignment types..." -ForegroundColor Cyan
-            
-            # Get active assignments (permanent)
-            Write-Host "Getting active SharePoint assignments..." -ForegroundColor Gray
+            $convertParams = @{
+                Assignments = $allAssignments
+                RoleDefinitions = $roleDefinitions
+                ServiceName = "SharePoint Online"
+                OverarchingRoles = $overarchingRoles
+            }            
 
-            $activeAssignments = @()
-            foreach ($roleId in $roleDefinitions.Id) {
-                $assignments = Get-MgRoleManagementDirectoryRoleAssignment -Filter "roleDefinitionId eq '$roleId'" -ErrorAction SilentlyContinue
-                if ($assignments) {
-                    $activeAssignments += $assignments
-                }
-            }
-            
-            Write-Host "Found $($activeAssignments.Count) active assignments" -ForegroundColor Green
-            
-            # Get PIM eligible assignments
-            $pimEligibleAssignments = @()
-            try {
-                Write-Host "Getting PIM eligible SharePoint assignments..." -ForegroundColor Gray
-                foreach ($roleId in $roleDefinitions.Id) {
-                    $pimEligible = Get-MgRoleManagementDirectoryRoleEligibilitySchedule -Filter "roleDefinitionId eq '$roleId'" -ErrorAction SilentlyContinue
-                    if ($pimEligible) {
-                        $pimEligibleAssignments += $pimEligible
-                    }
-                }
-                Write-Host "Found $($pimEligibleAssignments.Count) PIM eligible assignments" -ForegroundColor Green
-            }
-            catch {
-                Write-Host "Could not retrieve PIM eligible assignments (may not be licensed)" -ForegroundColor Yellow
-            }
-            
-            # Get PIM active assignments
-            $pimActiveAssignments = @()
-            try {
-                Write-Host "Getting PIM active SharePoint assignments..." -ForegroundColor Gray
-                foreach ($roleId in $roleDefinitions.Id) {
-                    $pimActive = Get-MgRoleManagementDirectoryRoleAssignmentSchedule -Filter "roleDefinitionId eq '$roleId'" -ErrorAction SilentlyContinue
-                    if ($pimActive) {
-                        $pimActiveAssignments += $pimActive
-                    }
-                }
-                Write-Host "Found $($pimActiveAssignments.Count) PIM active assignments" -ForegroundColor Green
-            }
-            catch {
-                Write-Host "Could not retrieve PIM active assignments (may not be licensed)" -ForegroundColor Yellow
-            }
-            
-            # Combine all assignments for processing
-            $allAssignments = @()
-            $allAssignments += $activeAssignments | ForEach-Object { $_ | Add-Member -NotePropertyName "AssignmentSource" -NotePropertyValue "Active" -PassThru }
-            $allAssignments += $pimEligibleAssignments | ForEach-Object { $_ | Add-Member -NotePropertyName "AssignmentSource" -NotePropertyValue "PIMEligible" -PassThru }
-            $allAssignments += $pimActiveAssignments | ForEach-Object { $_ | Add-Member -NotePropertyName "AssignmentSource" -NotePropertyValue "PIMActive" -PassThru }
-            
- #>            Write-Host "Total SharePoint administrative assignments to process: $($allAssignments.Count)" -ForegroundColor Green
+            $results = ConvertTo-ServiceAssignmentResults @convertParams
             
             # Process all assignments
-            foreach ($assignment in $allAssignments) {
+<#             foreach ($assignment in $allAssignments) {
                 try {
                     $role = $roleDefinitions | Where-Object { $_.Id -eq $assignment.RoleDefinitionId }
                     
@@ -260,7 +212,7 @@ function Get-SharePointRoleAudit {
                 catch {
                     Write-Verbose "Error processing SharePoint assignment: $($_.Exception.Message)"
                 }
-            }
+            } #>
         }
         catch {
             Write-Warning "Error retrieving SharePoint Azure AD administrative roles: $($_.Exception.Message)"

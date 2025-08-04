@@ -4,12 +4,16 @@
 # Optimized Azure AD Role Audit Function - Role-First Approach
 # This approach iterates through roles first, then gets assignments, then resolves users
 
+# Clean Get-AzureADRoleAudit function with unknown principal filtering
 function Get-AzureADRoleAudit {
     param(
-        [switch]$IncludePIM,
+        [bool]$IncludePIM = $true,
         [string]$TenantId,
         [string]$ClientId,
-        [string]$CertificateThumbprint
+        [string]$CertificateThumbprint,
+        [switch]$IncludeUnknownPrincipals,  # New parameter to include deleted/unknown objects
+        [bool]$IncludeAllPrincipalTypes = $true,   # Include groups and service principals
+        [switch]$IncludeServiceRoles
     )
     
     $results = @()
@@ -41,226 +45,73 @@ function Get-AzureADRoleAudit {
             Write-Host "✓ Connected with certificate authentication" -ForegroundColor Green
         }
         
-        # Connection verified - proceeding with role audit
-        
         # === STEP 1: Get all role definitions ===
+        $ServiceRoles = @(
+            'Teams Administrator',
+            "Intune Administrator",
+            "Compliance Data Administrator",
+            "Exchange Recipient Administrator",
+            "Compliance Administrator",
+            "Exchange Administrator",
+            "SharePoint Administrator",
+            "Teams Communications Administrator",
+            "Teams Communications Support Engineer", 
+            "Teams Communications Support Specialist",
+            "Teams Devices Administrator",
+            "Teams Telephony Administrator",
+            "Security Operator",
+            "Power Platform Administrator"
+        )
+
         Write-Host "Retrieving Azure AD role definitions..." -ForegroundColor Cyan
         $roleDefinitions = Get-MgRoleManagementDirectoryRoleDefinition -All
+
+        # Only include service roles if requested.
+        if (-not $IncludeServiceRoles) {
+            $roleDefinitions = $roleDefinitions | Where-Object {$_.DisplayName -notIn $ServiceRoles}
+        }
+
         Write-Host "Found $($roleDefinitions.Count) role definitions" -ForegroundColor Green
         
-        # # Check for User Administrator role specifically
-        # $userAdminRole = $roleDefinitions | Where-Object { $_.DisplayName -eq "User Administrator" }
-        # if ($userAdminRole) {
-        #     Write-Host "✓ User Administrator role found: $($userAdminRole.Id)" -ForegroundColor Green
-        # } else {
-        #     Write-Host "⚠ User Administrator role NOT found in role definitions" -ForegroundColor Yellow
-        #     # Show similar roles for debugging
-        #     $similarRoles = $roleDefinitions | Where-Object { $_.DisplayName -like "*User*" -or $_.DisplayName -like "*Administrator*" } | Select-Object DisplayName | Sort-Object DisplayName
-        #     Write-Host "Similar roles found:" -ForegroundColor Cyan
-        #     $similarRoles | ForEach-Object { Write-Host "  - $($_.DisplayName)" -ForegroundColor Gray }
-        # }
+        # === STEP 2: Get ALL types of role assignments using the helper function ===
+        Write-Host "Retrieving all Azure AD role assignments (active, PIM eligible, PIM active)..." -ForegroundColor Cyan
         
-        # Create lookup hashtable for performance
-        $roleDefinitionHash = @{}
-        foreach ($roleDef in $roleDefinitions) {
-            $roleDefinitionHash[$roleDef.Id] = $roleDef
+        # Use the helper function to get all assignment types
+        $allAssignments = Get-RoleAssignmentsForService -RoleDefinitions $roleDefinitions -ServiceName "Azure AD" -IncludePIM:$IncludePIM
+        
+        # === STEP 3: Convert assignments to standardized results using the helper function ===
+        Write-Host "Processing Azure AD role assignments..." -ForegroundColor Cyan
+        
+        # Define overarching roles (for Azure AD, all roles are overarching by definition)
+        $overarchingRoles = $roleDefinitions.DisplayName  # All Azure AD roles are overarching
+        
+        # Convert to standardized results using the helper function with filtering
+        $convertParams = @{
+            Assignments = $allAssignments
+            RoleDefinitions = $roleDefinitions
+            ServiceName = "Azure AD/Entra ID"
+            OverarchingRoles = $overarchingRoles
         }
         
-        # === STEP 2: Get ALL types of role assignments ===
-        Write-Host "Retrieving all role assignments (active, PIM eligible, PIM active)..." -ForegroundColor Cyan
-        
-        # Get active assignments (permanent)
-        Write-Host "Getting active role assignments..." -ForegroundColor Gray
-        $activeAssignments = Get-MgRoleManagementDirectoryRoleAssignment -all
-        Write-Host "Found $($activeAssignments.Count) active assignments" -ForegroundColor Green
-        
-        # Get PIM eligible assignments
-        $pimEligibleAssignments = @()
-        try {
-            Write-Host "Getting PIM eligible assignments..." -ForegroundColor Gray
-            $pimEligibleAssignments = Get-MgRoleManagementDirectoryRoleEligibilitySchedule -all
-            Write-Host "Found $($pimEligibleAssignments.Count) PIM eligible assignments" -ForegroundColor Green
-        }
-        catch {
-            Write-Host "Could not retrieve PIM eligible assignments (may not be licensed)" -ForegroundColor Yellow
+        # Add optional parameters if specified
+        if ($IncludeAllPrincipalTypes) {
+            $convertParams.IncludeAllPrincipalTypes = $true
         }
         
-        # Get PIM active assignments
-        $pimActiveAssignments = @()
-        try {
-            Write-Host "Getting PIM active assignments..." -ForegroundColor Gray
-            $pimActiveAssignments = Get-MgRoleManagementDirectoryRoleAssignmentSchedule -All
-            Write-Host "Found $($pimActiveAssignments.Count) PIM active assignments" -ForegroundColor Green
-        }
-        catch {
-            Write-Host "Could not retrieve PIM active assignments (may not be licensed)" -ForegroundColor Yellow
+        if ($IncludeUnknownPrincipals) {
+            $convertParams.IncludeUnknownPrincipals = $true
         }
         
-        # Combine all assignments for processing
-        $allAssignments = @()
-        $allAssignments += $activeAssignments | ForEach-Object { $_ | Add-Member -NotePropertyName "AssignmentSource" -NotePropertyValue "Active" -PassThru }
-        $allAssignments += $pimEligibleAssignments | ForEach-Object { $_ | Add-Member -NotePropertyName "AssignmentSource" -NotePropertyValue "PIMEligible" -PassThru }
-        $allAssignments += $pimActiveAssignments | ForEach-Object { $_ | Add-Member -NotePropertyName "AssignmentSource" -NotePropertyValue "PIMActive" -PassThru }
-        
-        $totalAssignments = $allAssignments.Count
-        Write-Host "Total assignments across all types: $totalAssignments" -ForegroundColor Green
-        
-        # Group all assignments by principal ID for efficient user lookup
-        $assignmentsByPrincipal = $allAssignments | Group-Object PrincipalId
-        Write-Host "Assignments belong to $($assignmentsByPrincipal.Count) unique principals" -ForegroundColor Gray
-        
-        # === STEP 3: Resolve principals efficiently ===
-        Write-Host "Resolving $($assignmentsByPrincipal.Count) unique principals..." -ForegroundColor Cyan
-        $userCache = @{}
-        $principalIds = $assignmentsByPrincipal.Name
-        $processedCount = 0
-        
-        # Process each principal ID
-        foreach ($principalId in $principalIds) {
-            $processedCount++
-            
-            # Log progress every 10 principals
-            if ($processedCount % 10 -eq 0 -or $processedCount -eq $principalIds.Count) {
-                Write-Host "Processed $processedCount of $($principalIds.Count) principals..." -ForegroundColor Gray
-            }
-            
-            try {
-                # Try as user first (most common case) - minimal properties for speed
-                $user = Get-MgUser -UserId $principalId -Property "UserPrincipalName,DisplayName,AccountEnabled,OnPremisesSyncEnabled" -ErrorAction SilentlyContinue
-                if ($user) {
-                    $userCache[$principalId] = @{
-                        Type = "User"
-                        UserPrincipalName = $user.UserPrincipalName
-                        DisplayName = $user.DisplayName
-                        AccountEnabled = $user.AccountEnabled
-                        #LastSignIn = $null  # Skip expensive SignInActivity for performance
-                        OnPremisesSyncEnabled = $null  # Skip for performance
-                    }
-                    continue
-                }
-                
-                # Try as service principal (fewer properties)
-                $servicePrincipal = Get-MgServicePrincipal -ServicePrincipalId $principalId -Property "AppId,DisplayName,AccountEnabled" -ErrorAction SilentlyContinue
-                if ($servicePrincipal) {
-                    $userCache[$principalId] = @{
-                        Type = "ServicePrincipal"
-                        UserPrincipalName = $servicePrincipal.AppId
-                        DisplayName = "$($servicePrincipal.DisplayName) (App)"
-                        AccountEnabled = $servicePrincipal.AccountEnabled
-                        #LastSignIn = $null
-                        OnPremisesSyncEnabled = $false
-                    }
-                    continue
-                }
-                
-                # Try as group (minimal properties)
-                $group = Get-MgGroup -GroupId $principalId -Property "Mail,DisplayName" -ErrorAction SilentlyContinue
-                if ($group) {
-                    $userCache[$principalId] = @{
-                        Type = "Group"
-                        UserPrincipalName = $group.Mail
-                        DisplayName = "$($group.DisplayName) (Group)"
-                        AccountEnabled = $null
-                        #LastSignIn = $null
-                        OnPremisesSyncEnabled = $null
-                    }
-                    continue
-                }
-                
-                # Mark as unknown if we can't resolve
-                $userCache[$principalId] = @{
-                    Type = "Unknown"
-                    UserPrincipalName = "Unknown-$principalId"
-                    DisplayName = "Unknown Principal"
-                    AccountEnabled = $null
-                    #LastSignIn = $null
-                    OnPremisesSyncEnabled = $null
-                }
-                
-            }
-            catch {
-                # Log error but continue processing
-                Write-Host "Warning: Could not resolve principal $principalId" -ForegroundColor Yellow
-                $userCache[$principalId] = @{
-                    Type = "Error"
-                    UserPrincipalName = "Error-$principalId"
-                    DisplayName = "Resolution Error"
-                    AccountEnabled = $null
-                    #LastSignIn = $null
-                    OnPremisesSyncEnabled = $null
-                }
-            }
-        }
-        
-        Write-Host "✓ Resolved $($userCache.Count) principals" -ForegroundColor Green
-        
-        # Show breakdown of principal types
-        $principalTypes = $userCache.Values | Group-Object Type
-        foreach ($type in $principalTypes) {
-            Write-Host "  $($type.Name): $($type.Count)" -ForegroundColor Gray
-        }
-        
-        # === STEP 4: Process all assignments efficiently ===
-        Write-Host "Processing all role assignments..." -ForegroundColor Cyan
-        foreach ($assignment in $allAssignments) {
-            try {
-                $role = $roleDefinitionHash[$assignment.RoleDefinitionId]
-                if (-not $role) { 
-                    Write-Verbose "Unknown role definition: $($assignment.RoleDefinitionId)"
-                    continue 
-                }
-                
-                $principalInfo = $userCache[$assignment.PrincipalId]
-                if (-not $principalInfo) {
-                    Write-Verbose "No cached info for principal: $($assignment.PrincipalId)"
-                    continue
-                }
-                
-                # Determine assignment type based on source
-                $assignmentType = switch ($assignment.AssignmentSource) {
-                    "Active" { "Active" }
-                    "PIMEligible" { "Eligible (PIM)" }
-                    "PIMActive" { "Active (PIM)" }
-                    default { "Active" }
-                }
-                
-                $results += [PSCustomObject]@{
-                    Service = "Azure AD/Entra ID"
-                    UserPrincipalName = $principalInfo.UserPrincipalName
-                    DisplayName = $principalInfo.DisplayName
-                    UserId = $assignment.PrincipalId
-                    RoleName = $role.DisplayName
-                    RoleDefinitionId = $assignment.RoleDefinitionId
-                    RoleScope = "Overarching"  # All Azure AD roles are overarching
-                    AssignmentType = $assignmentType
-                    AssignedDateTime = $assignment.CreatedDateTime
-                    UserEnabled = $principalInfo.AccountEnabled
-                    #LastSignIn = $principalInfo.LastSignIn
-                    Scope = $assignment.DirectoryScopeId
-                    AssignmentId = $assignment.Id
-                    #AuthenticationType = "Certificate"
-                    PrincipalType = $principalInfo.Type
-                    OnPremisesSyncEnabled = $principalInfo.OnPremisesSyncEnabled
-                    PIMEndDateTime = $assignment.ScheduleInfo.Expiration.EndDateTime
-                    PIMStartDateTime = $assignment.ScheduleInfo.Expiration.StartDateTime
-                }
-            }
-            catch {
-                Write-Warning "Error processing assignment $($assignment.Id): $($_.Exception.Message)"
-                continue
-            }
-        }
-        
-        # === STEP 5: Remove redundant PIM processing (now handled above) ===
-        # PIM assignments are now processed in the main loop above
+        $results = ConvertTo-ServiceAssignmentResults @convertParams
         
         Write-Host "✓ Azure AD role audit completed. Found $($results.Count) role assignments" -ForegroundColor Green
         
-        # Final summary
+        # === STEP 4: Enhanced summary reporting ===
         if ($results.Count -gt 0) {
             $userResults = $results | Where-Object { $_.PrincipalType -eq "User" }
             $serviceResults = $results | Where-Object { $_.PrincipalType -eq "ServicePrincipal" }
             $groupResults = $results | Where-Object { $_.PrincipalType -eq "Group" }
+            $unknownResults = $results | Where-Object { $_.PrincipalType -eq "Unknown" }
             $activeResults = $results | Where-Object { $_.AssignmentType -eq "Active" }
             $pimEligibleResults = $results | Where-Object { $_.AssignmentType -eq "Eligible (PIM)" }
             $pimActiveResults = $results | Where-Object { $_.AssignmentType -eq "Active (PIM)" }
@@ -269,8 +120,17 @@ function Get-AzureADRoleAudit {
             Write-Host "=== COMPREHENSIVE AUDIT SUMMARY ===" -ForegroundColor Cyan
             Write-Host "Total assignments: $($results.Count)" -ForegroundColor White
             Write-Host "User assignments: $($userResults.Count)" -ForegroundColor White
-            Write-Host "Service principal assignments: $($serviceResults.Count)" -ForegroundColor White
-            Write-Host "Group assignments: $($groupResults.Count)" -ForegroundColor White
+            
+            if ($IncludeAllPrincipalTypes) {
+                Write-Host "Service principal assignments: $($serviceResults.Count)" -ForegroundColor White
+                Write-Host "Group assignments: $($groupResults.Count)" -ForegroundColor White
+            }
+            
+            if ($unknownResults.Count -gt 0) {
+                Write-Host "Unknown principal assignments: $($unknownResults.Count)" -ForegroundColor Yellow
+                Write-Host "  (These are likely deleted users/groups/apps with orphaned assignments)" -ForegroundColor Gray
+            }
+            
             Write-Host "Active assignments: $($activeResults.Count)" -ForegroundColor White
             Write-Host "PIM eligible assignments: $($pimEligibleResults.Count)" -ForegroundColor Green
             Write-Host "PIM active assignments: $($pimActiveResults.Count)" -ForegroundColor Green
@@ -282,6 +142,29 @@ function Get-AzureADRoleAudit {
                 $roleBreakdown = $results | Where-Object { $_.RoleName -eq $role.Name } | Group-Object AssignmentType
                 $breakdown = ($roleBreakdown | ForEach-Object { "$($_.Name): $($_.Count)" }) -join ", "
                 Write-Host "  $($role.Name): $($role.Count) total [$breakdown]" -ForegroundColor White
+            }
+            
+            # Recommendations based on findings
+            Write-Host ""
+            Write-Host "=== RECOMMENDATIONS ===" -ForegroundColor Yellow
+            
+            $globalAdmins = $results | Where-Object { $_.RoleName -eq "Global Administrator" }
+            if ($globalAdmins.Count -gt 5) {
+                Write-Host "⚠️ Consider reducing Global Administrator count from $($globalAdmins.Count) to 5 or fewer" -ForegroundColor Yellow
+            }
+            
+            $disabledUsers = $results | Where-Object { $_.UserEnabled -eq $false }
+            if ($disabledUsers.Count -gt 0) {
+                Write-Host "⚠️ $($disabledUsers.Count) disabled users still have role assignments - consider cleanup" -ForegroundColor Yellow
+            }
+            
+            if ($pimEligibleResults.Count -eq 0 -and $activeResults.Count -gt 0) {
+                Write-Host "💡 Consider implementing PIM for eligible assignments to reduce standing privileges" -ForegroundColor Cyan
+            }
+            
+            # Show cleanup recommendation if we filtered unknown principals
+            if ($IncludeUnknownPrincipals -eq $false) {
+                Write-Host "💡 Use -IncludeUnknownPrincipals to see orphaned assignments for cleanup" -ForegroundColor Cyan
             }
         }
         
@@ -313,6 +196,7 @@ function Get-AzureADRoleAudit {
     
     return $results
 }
+
 function Get-TeamsRoleAudit {
     param(
         [string]$TenantId,
@@ -339,7 +223,7 @@ function Get-TeamsRoleAudit {
         if (-not $context -or $context.AuthType -ne "AppOnly") {
             Write-Host "Connecting to Microsoft Graph for Teams roles..." -ForegroundColor Yellow
             
-            Connect-MgGraph -TenantId $script:AppConfig.TenantId -ClientId $script:AppConfig.ClientId -CertificateThumbprint $script:AppConfig.CertificateThumbprint -NoWelcome
+            Connect-MgGraph -TenantId $script:AppConfig.TenantId -ClientId $script:AppConfig.ClientId -CertificateThumbprint $script:AppConfig.CertificateThumbprint #-NoWelcome
             
             # Verify app-only authentication
             $context = Get-MgContext
@@ -384,65 +268,21 @@ function Get-TeamsRoleAudit {
         Write-Host "Found $($roleDefinitions.Count) Teams role definitions" -ForegroundColor Green
 
         $allAssignments = Get-RoleAssignmentsForService -RoleDefinitions $roleDefinitions -ServiceName "Teams" -IncludePIM
- <#        
-        # FIX 2: Get ALL assignment types (Active, PIM Eligible, PIM Active)
-        Write-Host "Retrieving all Teams assignment types..." -ForegroundColor Cyan
-        
-        # Get active assignments (permanent)
-        Write-Host "Getting active Teams assignments..." -ForegroundColor Gray
-        
-        $activeAssignments = @()
-        foreach ($roleId in $roleDefinitions.Id) {
-            $assignments = Get-MgRoleManagementDirectoryRoleAssignment -Filter "roleDefinitionId eq '$roleId'" -ErrorAction SilentlyContinue
-            if ($assignments) {
-                $activeAssignments += $assignments
-            }
-        }
 
-        Write-Host "Found $($activeAssignments.Count) active assignments" -ForegroundColor Green
-        
-        # Get PIM eligible assignments
-        $pimEligibleAssignments = @()
-        try {
-            Write-Host "Getting PIM eligible Teams assignments..." -ForegroundColor Gray
-            foreach ($roleId in $roleDefinitions.Id) {
-                $pimEligible = Get-MgRoleManagementDirectoryRoleEligibilitySchedule -Filter "roleDefinitionId eq '$roleId'" -ErrorAction SilentlyContinue
-                if ($pimEligible) {
-                    $pimEligibleAssignments += $pimEligible
-                }
-            }
-            Write-Host "Found $($pimEligibleAssignments.Count) PIM eligible assignments" -ForegroundColor Green
-        }
-        catch {
-            Write-Host "Could not retrieve PIM eligible assignments (may not be licensed)" -ForegroundColor Yellow
-        }
-        
-        # Get PIM active assignments
-        $pimActiveAssignments = @()
-        try {
-            Write-Host "Getting PIM active Teams assignments..." -ForegroundColor Gray
-            foreach ($roleId in $roleDefinitions.Id) {
-                $pimActive = Get-MgRoleManagementDirectoryRoleAssignmentSchedule -Filter "roleDefinitionId eq '$roleId'" -ErrorAction SilentlyContinue
-                if ($pimActive) {
-                    $pimActiveAssignments += $pimActive
-                }
-            }
-            Write-Host "Found $($pimActiveAssignments.Count) PIM active assignments" -ForegroundColor Green
-        }
-        catch {
-            Write-Host "Could not retrieve PIM active assignments (may not be licensed)" -ForegroundColor Yellow
-        }
-        
-        # Combine all assignments for processing
-        $allAssignments = @()
-        $allAssignments += $activeAssignments | ForEach-Object { $_ | Add-Member -NotePropertyName "AssignmentSource" -NotePropertyValue "Active" -PassThru }
-        $allAssignments += $pimEligibleAssignments | ForEach-Object { $_ | Add-Member -NotePropertyName "AssignmentSource" -NotePropertyValue "PIMEligible" -PassThru }
-        $allAssignments += $pimActiveAssignments | ForEach-Object { $_ | Add-Member -NotePropertyName "AssignmentSource" -NotePropertyValue "PIMActive" -PassThru }
-   #>      
         Write-Host "Total Teams assignments across all types: $($allAssignments.Count)" -ForegroundColor Green
         
+        $convertParams = @{
+            Assignments = $allAssignments
+            RoleDefinitions = $roleDefinitions
+            ServiceName = "Microsoft Teams"
+            OverarchingRoles = $overarchingRoles
+        }
+
+        $results = ConvertTo-ServiceAssignmentResults @convertParams
+        
+        
         # Process all assignments
-        foreach ($assignment in $allAssignments) {
+<#         foreach ($assignment in $allAssignments) {
             try {
                 $role = $roleDefinitions | Where-Object { $_.Id -eq $assignment.RoleDefinitionId }
                 
@@ -534,7 +374,7 @@ function Get-TeamsRoleAudit {
                 Write-Verbose "Error processing Teams assignment: $($_.Exception.Message)"
             }
         }
-        
+ #>        
         Write-Host "✓ Teams role audit completed. Found $($results.Count) role assignments (including PIM)" -ForegroundColor Green
         
         # Provide feedback about role filtering
@@ -647,66 +487,21 @@ function Get-DefenderRoleAudit {
         $roleDefinitions = Get-MgRoleManagementDirectoryRoleDefinition -All | Where-Object { $_.DisplayName -in $rolesToInclude }
         Write-Host "Found $($roleDefinitions.Count) Defender role definitions" -ForegroundColor Green
 
-        $AllAssignments = Get-RoleAssignmentsForServices -RoleDefinitions $roleDefinitions -ServiceName "Defender" -IncludePIM
-        
-        <# 
-        # FIX 2: Get ALL assignment types (Active, PIM Eligible, PIM Active)
-        Write-Host "Retrieving all Defender assignment types..." -ForegroundColor Cyan
-        
-        # Get active assignments (permanent)
-        Write-Host "Getting active Defender assignments..." -ForegroundColor Gray
-
-        $activeAssignments = @()
-        foreach ($roleId in $roleDefinitions.Id) {
-            $assignments = Get-MgRoleManagementDirectoryRoleAssignment -Filter "roleDefinitionId eq '$roleId'" -ErrorAction SilentlyContinue
-            if ($assignments) {
-                $activeAssignments += $assignments
-            }
-        }
-        Write-Host "Found $($activeAssignments.Count) active assignments" -ForegroundColor Green
-        
-        # Get PIM eligible assignments
-        $pimEligibleAssignments = @()
-        try {
-            Write-Host "Getting PIM eligible Defender assignments..." -ForegroundColor Gray
-            foreach ($roleId in $roleDefinitions.Id) {
-                $pimEligible = Get-MgRoleManagementDirectoryRoleEligibilitySchedule -Filter "roleDefinitionId eq '$roleId'" -ErrorAction SilentlyContinue
-                if ($pimEligible) {
-                    $pimEligibleAssignments += $pimEligible
-                }
-            }
-            Write-Host "Found $($pimEligibleAssignments.Count) PIM eligible assignments" -ForegroundColor Green
-        }
-        catch {
-            Write-Host "Could not retrieve PIM eligible assignments (may not be licensed)" -ForegroundColor Yellow
-        }
-        
-        # Get PIM active assignments
-        $pimActiveAssignments = @()
-        try {
-            Write-Host "Getting PIM active Defender assignments..." -ForegroundColor Gray
-            foreach ($roleId in $roleDefinitions.Id) {
-                $pimActive = Get-MgRoleManagementDirectoryRoleAssignmentSchedule -Filter "roleDefinitionId eq '$roleId'" -ErrorAction SilentlyContinue
-                if ($pimActive) {
-                    $pimActiveAssignments += $pimActive
-                }
-            }
-            Write-Host "Found $($pimActiveAssignments.Count) PIM active assignments" -ForegroundColor Green
-        }
-        catch {
-            Write-Host "Could not retrieve PIM active assignments (may not be licensed)" -ForegroundColor Yellow
-        }
-        
-        # Combine all assignments for processing
-        $allAssignments = @()
-        $allAssignments += $activeAssignments | ForEach-Object { $_ | Add-Member -NotePropertyName "AssignmentSource" -NotePropertyValue "Active" -PassThru }
-        $allAssignments += $pimEligibleAssignments | ForEach-Object { $_ | Add-Member -NotePropertyName "AssignmentSource" -NotePropertyValue "PIMEligible" -PassThru }
-        $allAssignments += $pimActiveAssignments | ForEach-Object { $_ | Add-Member -NotePropertyName "AssignmentSource" -NotePropertyValue "PIMActive" -PassThru } #>
-        
+        $AllAssignments = Get-RoleAssignmentsForService -RoleDefinitions $roleDefinitions -ServiceName "Defender" -IncludePIM
+                    
         Write-Host "Total Defender assignments across all types: $($allAssignments.Count)" -ForegroundColor Green
+
+        $convertParams = @{
+            Assignments = $AllAssignments
+            RoleDefinitions = $roleDefinitions
+            ServiceName = "Microsoft Defender"
+            OverArchingRoles = $overarchingRoles
+        }
+
+        $results = ConvertTo-ServiceAssignmentResults @convertParams
         
         # Process all assignments
-        foreach ($assignment in $allAssignments) {
+<#         foreach ($assignment in $allAssignments) {
             try {
                 $role = $roleDefinitions | Where-Object { $_.Id -eq $assignment.RoleDefinitionId }
                 
@@ -796,7 +591,7 @@ function Get-DefenderRoleAudit {
             catch {
                 Write-Verbose "Error processing Defender assignment: $($_.Exception.Message)"
             }
-        }
+        } #>
         
         Write-Host "✓ Defender role audit completed. Found $($results.Count) role assignments (including PIM)" -ForegroundColor Green
         
@@ -884,10 +679,7 @@ function Get-PowerPlatformAzureADRoleAudit {
         
         # Power Platform-specific Azure AD roles (NOT overarching roles)
         $powerPlatformSpecificRoles = @(
-            "Dynamics 365 Administrator",
-            "Power BI Administrator",
-            "Power BI Service Administrator",  # Legacy name
-            "CRM Service Administrator"       # Legacy name for Dynamics 365 Administrator
+            "Power Platform Administrator"            
         )
         
         # Overarching roles that should only appear in Azure AD audit
@@ -898,8 +690,7 @@ function Get-PowerPlatformAzureADRoleAudit {
             "Cloud Application Administrator",
             "Application Administrator",
             "Privileged Authentication Administrator",
-            "Privileged Role Administrator",
-            "Power Platform Administrator"  # This is overarching - covers all Power Platform services
+            "Privileged Role Administrator" # This is overarching - covers all Power Platform services
         )
         
         # Determine which roles to include based on parameter
@@ -916,64 +707,20 @@ function Get-PowerPlatformAzureADRoleAudit {
         Write-Host "Found $($roleDefinitions.Count) Power Platform role definitions" -ForegroundColor Green
 
         $allAssignments = Get-RoleAssignmentsForService -RoleDefinitions $roleDefinitions -ServiceName "Power Platform" -IncludePIM
-        
-<#         # FIX 2: Get ALL assignment types (Active, PIM Eligible, PIM Active)
-        Write-Host "Retrieving all Power Platform assignment types..." -ForegroundColor Cyan
-        
-        # Get active assignments (permanent)
-        Write-Host "Getting active Power Platform assignments..." -ForegroundColor Gray
-
-        # $activeAssignments = Get-MgRoleManagementDirectoryRoleAssignment | Where-Object { $_.RoleDefinitionId -in $roleDefinitions.Id }
-        $activeAssignments = @()
-        foreach ($roleId in $roleDefinitions.Id) {
-            $assignments = Get-MgRoleManagementDirectoryRoleAssignment -Filter "roleDefinitionId eq '$roleId'" -ErrorAction SilentlyContinue
-            if ($assignments) {
-                $activeAssignments += $assignments
-            }
-        }
-        
-        # Get PIM eligible assignments
-        $pimEligibleAssignments = @()
-        try {
-            Write-Host "Getting PIM eligible Power Platform assignments..." -ForegroundColor Gray
-            foreach ($roleId in $roleDefinitions.Id) {
-                $pimEligible = Get-MgRoleManagementDirectoryRoleEligibilitySchedule -Filter "roleDefinitionId eq '$roleId'" -ErrorAction SilentlyContinue
-                if ($pimEligible) {
-                    $pimEligibleAssignments += $pimEligible
-                }
-            }
-            Write-Host "Found $($pimEligibleAssignments.Count) PIM eligible assignments" -ForegroundColor Green
-        }
-        catch {
-            Write-Host "Could not retrieve PIM eligible assignments (may not be licensed)" -ForegroundColor Yellow
-        }
-        
-        # Get PIM active assignments
-        $pimActiveAssignments = @()
-        try {
-            Write-Host "Getting PIM active Power Platform assignments..." -ForegroundColor Gray
-            foreach ($roleId in $roleDefinitions.Id) {
-                $pimActive = Get-MgRoleManagementDirectoryRoleAssignmentSchedule -Filter "roleDefinitionId eq '$roleId'" -ErrorAction SilentlyContinue
-                if ($pimActive) {
-                    $pimActiveAssignments += $pimActive
-                }
-            }
-            Write-Host "Found $($pimActiveAssignments.Count) PIM active assignments" -ForegroundColor Green
-        }
-        catch {
-            Write-Host "Could not retrieve PIM active assignments (may not be licensed)" -ForegroundColor Yellow
-        }
-        
-        # Combine all assignments for processing
-        $allAssignments = @()
-        $allAssignments += $activeAssignments | ForEach-Object { $_ | Add-Member -NotePropertyName "AssignmentSource" -NotePropertyValue "Active" -PassThru }
-        $allAssignments += $pimEligibleAssignments | ForEach-Object { $_ | Add-Member -NotePropertyName "AssignmentSource" -NotePropertyValue "PIMEligible" -PassThru }
-        $allAssignments += $pimActiveAssignments | ForEach-Object { $_ | Add-Member -NotePropertyName "AssignmentSource" -NotePropertyValue "PIMActive" -PassThru }
-  #>       
+               
         Write-Host "Total Power Platform assignments across all types: $($allAssignments.Count)" -ForegroundColor Green
+
+          $convertParams = @{
+            Assignments = $allAssignments
+            RoleDefinitions = $roleDefinitions
+            ServiceName = "Power Platform"
+            OverarchingRoles = $overarchingRoles
+        }
         
+        $results = ConvertTo-ServiceAssignmentResults @convertParams
+
         # Process all assignments (regular + PIM eligible + PIM active)
-        foreach ($assignment in $allAssignments) {
+<#         foreach ($assignment in $allAssignments) {
             try {
                 $role = $roleDefinitions | Where-Object { $_.Id -eq $assignment.RoleDefinitionId }
                 
@@ -1098,7 +845,7 @@ function Get-PowerPlatformAzureADRoleAudit {
                     PIMEndDateTime = $null
                 }
             }
-        }
+        } #>
         
         Write-Host "✓ Power Platform Azure AD role audit completed. Found $($results.Count) role assignments (including PIM)" -ForegroundColor Green
         
@@ -1155,3 +902,4 @@ function Get-PowerPlatformAzureADRoleAudit {
     
     return $results
 }
+
