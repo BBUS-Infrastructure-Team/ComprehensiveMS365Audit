@@ -871,19 +871,6 @@ function Get-SecurityAlerts {
     return $alerts
 }
 
-# Helper function for Exchange security alerts
-function Get-ExchangeSecurityAlerts {
-    param([array]$ExchangeData)
-    
-    return @{
-        orgManagementMembers = ($ExchangeData | Where-Object { $_.RoleName -eq "Organization Management" }).Count
-        securityAdministrators = ($ExchangeData | Where-Object { $_.RoleName -eq "Security Administrator" }).Count
-        disabledUsersWithExchangeRoles = ($ExchangeData | Where-Object { $_.UserEnabled -eq $false }).Count
-        groupAssignments = ($ExchangeData | Where-Object { $_.PrincipalType -eq "Group" }).Count
-        onPremisesSyncedUsers = ($ExchangeData | Where-Object { $_.OnPremisesSyncEnabled -eq $true }).Count
-    }
-}
-
 # Helper function for recommendations
 function Get-SecurityRecommendations {
     param([array]$AuditResults, [hashtable]$Stats)
@@ -986,7 +973,7 @@ function Get-FormattedAssignments {
 }
 
 # Helper function for role risk assessment
-function Get-RoleRiskLevel {
+<# function Get-RoleRiskLevel {
     param([string]$RoleName)
     
     switch -Regex ($RoleName) {
@@ -995,7 +982,7 @@ function Get-RoleRiskLevel {
         ".*Administrator.*|.*Admin.*" { return "MEDIUM" }
         default { return "LOW" }
     }
-}
+} #>
 
 # Helper function to show report summary
 function Show-ReportSummary {
@@ -1454,44 +1441,6 @@ function Get-ExchangeSecurityAlerts {
         disabledUsersWithExchangeRoles = ($ExchangeData | Where-Object { $_.UserEnabled -eq $false }).Count
         groupAssignments = ($ExchangeData | Where-Object { $_.PrincipalType -eq "Group" }).Count
         onPremisesSyncedUsers = ($ExchangeData | Where-Object { $_.OnPremisesSyncEnabled -eq $true }).Count
-    }
-}
-
-# Helper function for Enhanced Exchange Analysis
-function Get-ExchangeSpecificAnalysis {
-    param([array]$ExchangeData)
-    
-    $roleGroups = $ExchangeData | Where-Object { $_.AssignmentType -eq "Role Group Member" }
-    $azureADRoles = $ExchangeData | Where-Object { $_.RoleSource -eq "AzureAD" }
-    $onPremSynced = $ExchangeData | Where-Object { $_.OnPremisesSyncEnabled -eq $true }
-    $groups = $ExchangeData | Where-Object { $_.PrincipalType -eq "Group" }
-    
-    return @{
-        roleGroupAssignments = $roleGroups.Count
-        azureADRoleAssignments = $azureADRoles.Count
-        onPremisesSyncedUsers = $onPremSynced.Count
-        groupAssignments = $groups.Count
-        hybridEnvironment = $onPremSynced.Count -gt 0
-        orgManagementMembers = ($ExchangeData | Where-Object { $_.RoleName -eq "Organization Management" }).Count
-        securityAdministrators = ($ExchangeData | Where-Object { $_.RoleName -eq "Security Administrator" }).Count
-        crossServiceSyncedGroups = ($ExchangeData | Where-Object { 
-            $_.RoleGroupDescription -like "*synchronized across services*" 
-        }).Count
-    }
-}
-
-# Helper function for Intune-specific analysis
-function Get-IntuneSpecificAnalysis {
-    param([array]$IntuneData)
-    
-    return @{
-        rbacAssignments = ($IntuneData | Where-Object { $_.RoleType -eq "IntuneRBAC" }).Count
-        azureADAssignments = ($IntuneData | Where-Object { $_.RoleType -eq "AzureAD" }).Count
-        builtInRoles = ($IntuneData | Where-Object { $_.IsBuiltIn -eq $true }).Count
-        customRoles = ($IntuneData | Where-Object { $_.IsBuiltIn -eq $false }).Count
-        serviceAdministrators = ($IntuneData | Where-Object { $_.RoleName -eq "Intune Service Administrator" }).Count
-        policyOwners = ($IntuneData | Where-Object { $_.RoleType -eq "PolicyOwner" }).Count
-        timeBoundAssignments = ($IntuneData | Where-Object { $_.AssignmentType -eq "Time-bound RBAC" }).Count
     }
 }
 
@@ -2165,7 +2114,7 @@ function Get-RoleGroupMemberResult () {
         
         # Try to get additional user info from Graph for consistency
         $userEnabled = $null
-        $lastSignIn = $null
+        #$lastSignIn = $null
         $onPremisesSyncEnabled = $null
         
         if ($isUser) {
