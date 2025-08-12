@@ -2,40 +2,80 @@
 # Updated Get-ComprehensiveM365RoleAudit function with proper role filtering to eliminate deduplication needs
 
 function Get-ComprehensiveM365RoleAudit {
+    [CmdletBinding(DefaultParameterSetName = 'default')]
     param(
+        # Common parameters available to all parameter sets
         [string]$ExportPath,
-
-        [Parameter(Mandatory = $true)]
-        [string]$SharePointTenantUrl, # Example: "https://balfourbeattyus-admin.sharepoint.com"
-
-        [Parameter(Mandatory = $False)]
-        [string]$Organization,  # Required for Exchange and Compliance
-
         [bool]$IncludePIM = $true,
-        [switch]$IncludeExchange,
-        [switch]$IncludeSharePoint,
-        [switch]$IncludeTeams,
-        [switch]$IncludePurview,
-        [switch]$IncludeDefender,
-        [switch]$IncludePowerPlatform,
-        [switch]$IncludeAll,
         [switch]$IncludeAnalysis,
-
-        # Can be set with Set-M365AuditCredentials
         [string]$TenantId,
         [string]$ClientId,
         [string]$CertificateThumbprint,
-        
-        # New parameter to control overarching role inclusion in service audits
         [switch]$IncludeOverarchingRolesInServices,
-        
-        # Deduplication is now optional and not recommended with proper filtering
         [ValidateSet("Strict", "Loose", "ServicePreference", "RoleScoped", "None")]
-        #[string]$DeduplicationMode = "None",
+        [string]$DeduplicationMode = "None",
         [switch]$ShowDuplicatesRemoved,
-        [switch]$PreferAzureADSource
+        [switch]$PreferAzureADSource,
+
+        # Individual service switches - only available when NOT using IncludeAll
+        [Parameter(ParameterSetName = 'Exchange')]
+        [Parameter(ParameterSetName = 'SharePoint')]
+        [Parameter(ParameterSetName = 'Individual')]
+        [switch]$IncludeTeams,
+
+        [Parameter(ParameterSetName = 'Exchange')]
+        [Parameter(ParameterSetName = 'SharePoint')]
+        [Parameter(ParameterSetName = 'Individual')]
+        [switch]$IncludePurview,
+
+        [Parameter(ParameterSetName = 'Exchange')]
+        [Parameter(ParameterSetName = 'SharePoint')]
+        [Parameter(ParameterSetName = 'Individual')]
+        [switch]$IncludeDefender,
+        
+        [Parameter(ParameterSetName = 'Exchange')]
+        [Parameter(ParameterSetName = 'SharePoint')]
+        [Parameter(ParameterSetName = 'Individual')]
+        [switch]$IncludePowerPlatform,
+
+        [Parameter(ParameterSetName = 'Exchange')]
+        [Parameter(ParameterSetName = 'SharePoint')]
+        [Parameter(ParameterSetName = 'Individual')]
+        [switch]$IncludeExchange,
+
+        [Parameter(ParameterSetName = 'Exchange')]
+        [Parameter(ParameterSetName = 'SharePoint')]
+        [Parameter(ParameterSetName = 'Individual')]
+        [switch]$IncludeSharepoint,
+
+        # Parameter set specific parameters
+        [Parameter(
+            Mandatory = $true,
+            ParameterSetName = 'IncludeAll'
+        )]
+        [Parameter(
+            Mandatory = $true,
+            ParameterSetName = 'Exchange'
+        )]
+        [string]$Organization,
+
+        [Parameter(
+            Mandatory = $true,
+            ParameterSetName = 'IncludeAll'
+        )]
+        [Parameter(
+            Mandatory = $true,
+            ParameterSetName = 'SharePoint'
+        )]
+        [string]$SharePointTenantUrl,
+
+        [Parameter(
+            Mandatory = $true,
+            ParameterSetName = 'IncludeAll'
+        )]
+        [switch]$IncludeAll
     )
-    
+
     $allResults = @()
     
     try {
