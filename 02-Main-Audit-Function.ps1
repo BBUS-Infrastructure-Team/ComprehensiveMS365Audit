@@ -541,4 +541,61 @@ function Get-ComprehensiveM365RoleAudit {
         
         return @()
     }
+
+    <#
+    .Description
+    This function performs a comprehensive audit of Microsoft 365 roles across multiple services.
+    It retrieves role assignments from Azure AD, Exchange Online, SharePoint Online, Teams, Microsoft Defender, Intune, and Power Platform.
+    The function supports certificate-based authentication and can export results to CSV.
+    It includes options for deduplication, analysis, and service-specific role filtering.
+    .PARAMETER ExportPath
+    Specifies the path to export the audit results as a CSV file.
+    .PARAMETER IncludePIM
+    Indicates whether to include Privileged Identity Management (PIM) roles in the audit.
+    .PARAMETER IncludeAnalysis
+    If specified, includes detailed analysis of the audit results.
+    .PARAMETER TenantId
+    The Azure AD tenant ID for the audit.
+    .PARAMETER ClientId
+    The client ID of the Azure AD application used for authentication.
+    .PARAMETER CertificateThumbprint
+    The thumbprint of the certificate used for authentication.
+    .PARAMETER IncludeOverarchingRolesInServices
+    If specified, includes overarching Azure AD roles in service audits (may cause duplicates).
+    .PARAMETER DeduplicationMode
+    Specifies the deduplication mode to use for removing duplicate role assignments.
+    Valid values are "None", "Basic", "Advanced".
+    .PARAMETER ShowDuplicatesRemoved
+    If specified, shows the number of duplicates removed during deduplication.
+    .PARAMETER PreferAzureADSource
+    If specified, prefers Azure AD source for role assignments during deduplication.
+    .PARAMETER IncludeIntune
+    If specified, includes Microsoft Intune roles in the audit.
+    .PARAMETER IncludeTeams
+    If specified, includes Microsoft Teams roles in the audit.
+    .PARAMETER IncludePurview
+    If specified, includes Microsoft Purview roles in the audit. 
+    .PARAMETER IncludeDefender
+    If specified, includes Microsoft Defender roles in the audit.
+    .PARAMETER IncludePowerPlatform
+    If specified, includes Power Platform roles in the audit.
+    .PARAMETER IncludeExchange
+    If specified, includes Exchange Online roles in the audit.
+    .PARAMETER IncludeSharepoint
+    If specified, includes SharePoint Online roles in the audit.
+    .PARAMETER Organization
+    The Exchange Online organization to audit. Required if including Exchange or Purview roles.
+    .PARAMETER SharePointTenantUrl
+    The SharePoint Online tenant URL to audit. Required if including SharePoint roles.
+    .PARAMETER IncludeAll
+    If specified, includes all services in the audit (Azure AD, Exchange, SharePoint, Teams, Defender, Intune, Power Platform).
+    .EXAMPLE
+    Perform-M365ComprehensiveRoleAudit -ExportPath "C:\M365Audit\Roles.csv" -IncludePIM -IncludeAnalysis -TenantId "your-tenant-id" -ClientId "your-client-id" -CertificateThumbprint "your-cert-thumbprint" -IncludeOverarchingRolesInServices -DeduplicationMode "Advanced" -ShowDuplicatesRemoved -PreferAzureADSource
+    This example performs a comprehensive audit of Microsoft 365 roles, exporting results to a CSV file,
+    including PIM roles and detailed analysis. It uses certificate-based authentication and applies advanced deduplication.
+    .NOTES
+    You can set the application credentials by using Set-M365AuditCertCredentials function.
+    Ensure the certificate is properly configured in Azure AD app registration.
+    This function is designed to be used in a PowerShell environment with the required modules installed.
+    #>
 }

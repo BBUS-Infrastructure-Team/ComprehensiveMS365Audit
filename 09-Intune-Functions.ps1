@@ -223,7 +223,7 @@ function Get-IntuneRoleAudit {
                                     $roleDefinition = $roleDefinitionLookup[$roleDefinitionId]
                                     $roleResolutionMethod = "Fuzzy match: $matchedRoleName"
                                     Write-Verbose "Method 4c - Fuzzy match found: $matchedRoleName -> $roleDefinitionId"
-                                }
+                                }Optional you can use Set-M365AuditCredentials to set credentials globally instead of passing each time.
                                 elseif ($possibleMatches.Count -gt 1) {
                                     Write-Verbose "Method 4c - Multiple fuzzy matches found: $($possibleMatches -join ', ')"
                                 }
@@ -570,4 +570,22 @@ function Get-IntuneRoleAudit {
     }
     
     return $results
+    <#
+    .Description
+    This function retrieves and analyzes Intune administrative role assignments using certificate-based authentication.
+    It supports both Intune RBAC and Azure AD roles, with enhanced role resolution methods.
+    It provides detailed output including role definitions, user details, scope information, and PIM status
+    .PARAMETER IncludeAzureADRoles
+    Include overarching Azure AD roles in the results. Default is $false.
+    .PARAMETER IncludeAnalysis
+    Include detailed analysis of Intune administrative roles, including recommendations and security validation. Default is $false.
+    .EXAMPLE 
+    Get-IntuneRoleAudit -IncludeAzureADRoles -IncludeAnalysis
+    Retrieves Intune administrative role assignments including Azure AD roles and provides detailed analysis.
+    .EXAMPLE
+    Get-IntuneRoleAudit -IncludeAnalysis
+    Retrieves Intune administrative role assignments with detailed analysis but excludes Azure AD roles.
+    .NOTES
+    Optional you can use Set-M365AuditCredentials to set credentials globally instead of passing each time.
+    #>
 }

@@ -72,6 +72,20 @@ function Set-M365AuditCredentials {
         Write-Host "Certificate Subject: $($cert.Subject)" -ForegroundColor Gray
         Write-Host "Certificate Expires: $($cert.NotAfter)" -ForegroundColor Gray
     } 
+    <#
+    .DESCRIPTION
+    Sets the application registration credentials for Microsoft 365 audit functions using certificate-based authentication.
+    .PARAMETER TenantId
+    The Azure AD tenant ID where the application is registered.
+    .PARAMETER ClientId
+    The client ID (application ID) of the registered application.
+    .PARAMETER CertificateThumbprint
+    The thumbprint of the certificate stored in the Windows Certificate Store to use for authentication.
+    .PARAMETER Quiet
+    If specified, suppresses detailed output of the configuration.
+    .EXAMPLE
+    Set-M365AuditCredentials -TenantId "your-tenant-id" -ClientId "your-client-id" -CertificateThumbprint "your-cert-thumbprint"
+    #>
 }
 
 function Clear-M365AuditAppCredentials {
@@ -85,6 +99,11 @@ function Clear-M365AuditAppCredentials {
     $script:AppConfig.AuthType = "Interactive"
     
     Write-Host "✓ Application credentials cleared" -ForegroundColor Green
+
+    <#
+    .DESCRIPTION
+    Clears the application registration credentials for Microsoft 365 audit functions.
+    #>
 }
 
 function Get-M365AuditCurrentConfig {
@@ -121,6 +140,10 @@ function Get-M365AuditCurrentConfig {
     else {
         Write-Host "No application credentials configured - using interactive authentication" -ForegroundColor Yellow
     }
+    <#
+    .DESCRIPTION
+    Displays the current configuration for Microsoft 365 audit functions, including authentication type and credentials.
+    #>
 }
 
 function Connect-M365ServiceWithAuth {

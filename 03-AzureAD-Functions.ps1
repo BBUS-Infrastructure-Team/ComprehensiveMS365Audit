@@ -195,6 +195,30 @@ function Get-AzureADRoleAudit {
     }
     
     return $results
+
+    <#
+    .DESCRIPTION 
+    This function audits Azure AD roles and assignments, providing detailed insights into role usage, principal types, and assignment types.
+    .PARAMETER IncludePIM
+    Include PIM (Privileged Identity Management) assignments in the audit.
+    .PARAMETER TenantId
+    The Azure AD tenant ID to connect to.
+    .PARAMETER ClientId
+    The client ID of the Azure AD application used for authentication.
+    .PARAMETER CertificateThumbprint
+    The thumbprint of the certificate used for authentication.
+    .PARAMETER IncludeUnknownPrincipals
+    Include assignments for deleted or unknown principals (e.g., orphaned assignments).
+    .PARAMETER IncludeAllPrincipalTypes
+    Include all principal types (users, groups, service principals) in the audit.
+    .PARAMETER IncludeServiceRoles
+    Include service-specific roles in the audit (e.g., Teams, Intune).
+    .EXAMPLE
+    Get-AzureADRoleAudit -IncludePIM -TenantId "your-tenant-id" -ClientId "your-client-id" -CertificateThumbprint "your-cert-thumbprint"
+    Retrieves all Azure AD roles and assignments, including PIM, for the specified tenant using certificate authentication.
+    .NOTES
+    You can optionally set the application credential using Set-M365AuditCredentials. The app credentials will be saved for subsequent calls.
+    #>
 }
 
 function Get-TeamsRoleAudit {
@@ -417,6 +441,24 @@ function Get-TeamsRoleAudit {
     }
     
     return $results
+
+    <#
+    .DESCRIPTION
+    This function audits Microsoft Teams roles and assignments, providing detailed insights into role usage, principal types, and assignment types.
+    .PARAMETER TenantId
+    The Azure AD tenant ID to connect to.
+    .PARAMETER ClientId
+    The client ID of the Azure AD application used for authentication.
+    .PARAMETER CertificateThumbprint
+    The thumbprint of the certificate used for authentication.
+    .PARAMETER IncludeAzureADRoles
+    Include overarching Azure AD roles in the audit (e.g., Global Administrator, Security Administrator).
+    .EXAMPLE
+    Get-TeamsRoleAudit -TenantId "your-tenant-id" -ClientId "your-client-id" -CertificateThumbprint "your-cert-thumbprint"
+    Retrieves all Microsoft Teams roles and assignments, including overarching Azure AD roles, for the specified tenant using certificate authentication.
+    .NOTES
+    You can optionally set the application credential using Set-M365AuditCredentials. The app credentials will be saved for subsequent calls.    
+    #>
 }
 
 # Enhanced Microsoft Defender Role Audit Function with Azure AD Role Filtering
@@ -635,6 +677,24 @@ function Get-DefenderRoleAudit {
     }
     
     return $results
+
+    <#
+    .DESCRIPTION
+    This function audits Microsoft Defender roles and assignments, providing detailed insights into role usage, principal types, and assignment types.
+    .PARAMETER TenantId
+    The Azure AD tenant ID to connect to.
+    .PARAMETER ClientId
+    The client ID of the Azure AD application used for authentication.
+    .PARAMETER CertificateThumbprint
+    The thumbprint of the certificate used for authentication.
+    .PARAMETER IncludeAzureADRoles
+    Include overarching Azure AD roles in the audit (e.g., Global Administrator, Security Administrator).
+    .EXAMPLE
+    Get-DefenderRoleAudit -TenantId "your-tenant-id" -ClientId "your-client-id" -CertificateThumbprint "your-cert-thumbprint"
+    Retrieves all Microsoft Defender roles and assignments, including overarching Azure AD roles, for the specified tenant using certificate authentication.
+    .NOTES
+    You can optionally set the application credential using Set-M365AuditCredentials. The app credentials will be saved for subsequent calls.
+    #>
 }
 
 # Enhanced Power Platform Azure AD Role Audit Function with Azure AD Role Filtering
@@ -718,134 +778,6 @@ function Get-PowerPlatformAzureADRoleAudit {
         }
         
         $results = ConvertTo-ServiceAssignmentResults @convertParams
-
-        # Process all assignments (regular + PIM eligible + PIM active)
-<#         foreach ($assignment in $allAssignments) {
-            try {
-                $role = $roleDefinitions | Where-Object { $_.Id -eq $assignment.RoleDefinitionId }
-                
-                # Determine assignment type based on source
-                $assignmentType = switch ($assignment.AssignmentSource) {
-                    "Active" { "Active" }
-                    "PIMEligible" { "Eligible (PIM)" }
-                    "PIMActive" { "Active (PIM)" }
-                    default { "Active" }
-                }
-                
-                # Resolve principal (users, groups, service principals)
-                $principalInfo = @{
-                    UserPrincipalName = "Unknown"
-                    DisplayName = "Unknown"
-                    UserId = $assignment.PrincipalId
-                    UserEnabled = $null
-                    OnPremisesSyncEnabled = $Null
-                    PrincipalType = "Unknown"
-                }
-                
-                # Try as user first
-                try {
-                    $user = Get-MgUser -UserId $assignment.PrincipalId -Property "UserPrincipalName,DisplayName,AccountEnabled,OnPremisesSyncEnabled" -ErrorAction SilentlyContinue
-                    if ($user) {
-                        $principalInfo.UserPrincipalName = $user.UserPrincipalName
-                        $principalInfo.DisplayName = $user.DisplayName
-                        $principalInfo.UserEnabled = $user.AccountEnabled
-                        $principalInfo.OnPremisesSyncEnabled = $User.OnPremisesSyncEnabled
-                        $principalInfo.PrincipalType = "User"
-                    }
-                }
-                catch { }
-                
-                # Try as service principal if not user
-                if ($principalInfo.PrincipalType -eq "Unknown") {
-                    try {
-                        $servicePrincipal = Get-MgServicePrincipal -ServicePrincipalId $assignment.PrincipalId -Property "AppId,DisplayName,AccountEnabled" -ErrorAction SilentlyContinue
-                        if ($servicePrincipal) {
-                            $principalInfo.UserPrincipalName = $servicePrincipal.AppId
-                            $principalInfo.DisplayName = "$($servicePrincipal.DisplayName) (Application)"
-                            $principalInfo.UserEnabled = $servicePrincipal.AccountEnabled                            
-                            $principalInfo.PrincipalType = "ServicePrincipal"
-                        }
-                    }
-                    catch { }
-                }
-                
-                # Try as group if still unknown
-                if ($principalInfo.PrincipalType -eq "Unknown") {
-                    try {
-                        $group = Get-MgGroup -GroupId $assignment.PrincipalId -Property "Mail,DisplayName" -ErrorAction SilentlyContinue
-                        if ($group) {
-                            $principalInfo.UserPrincipalName = $group.Mail
-                            $principalInfo.DisplayName = "$($group.DisplayName) (Group)"
-                            $principalInfo.PrincipalType = "Group"
-                        }
-                    }
-                    catch { }
-                }
-                
-                # Try as directory object if still unknown
-                if ($principalInfo.PrincipalType -eq "Unknown") {
-                    try {
-                        $directoryObject = Get-MgDirectoryObject -DirectoryObjectId $assignment.PrincipalId -ErrorAction SilentlyContinue
-                        if ($directoryObject) {
-                            $principalInfo.DisplayName = "$($directoryObject.DisplayName) ($($directoryObject.'@odata.type'))"
-                            $principalInfo.PrincipalType = $directoryObject.'@odata.type'
-                        }
-                    }
-                    catch { }
-                }
-                
-                # Determine role scope for enhanced deduplication
-                $roleScope = if ($role.DisplayName -in $overarchingRoles) { "Overarching" } else { "Service-Specific" }
-                
-                $results += [PSCustomObject]@{
-                    Service = "Power Platform"
-                    UserPrincipalName = $principalInfo.UserPrincipalName
-                    DisplayName = $principalInfo.DisplayName
-                    UserId = $principalInfo.UserId
-                    RoleName = $role.DisplayName
-                    RoleDefinitionId = $assignment.RoleDefinitionId
-                    RoleScope = $roleScope  # New property for enhanced deduplication
-                    AssignmentType = $assignmentType
-                    AssignedDateTime = $assignment.CreatedDateTime
-                    UserEnabled = $principalInfo.UserEnabled
-                    #LastSignIn = $principalInfo.LastSignIn
-                    Scope = $assignment.DirectoryScopeId
-                    AssignmentId = $assignment.Id
-                    #AuthenticationType = "Certificate"
-                    PrincipalType = $principalInfo.PrincipalType
-                    OnPremisesSyncEnabled = $principalInfo.OnPremisesSyncEnabled
-                    PIMStartDateTime = $assignment.ScheduleInfo.StartDateTime
-                    PIMEndDateTime = $assignment.ScheduleInfo.Expiration.EndDateTime
-                }
-                
-            }
-            catch {
-                Write-Verbose "Error processing Power Platform assignment: $($_.Exception.Message)"
-                
-                # Still add with limited info to avoid losing data
-                $role = $roleDefinitions | Where-Object { $_.Id -eq $assignment.RoleDefinitionId }
-                $results += [PSCustomObject]@{
-                    Service = "Power Platform"
-                    UserPrincipalName = "Error resolving principal"
-                    DisplayName = "Principal ID: $($assignment.PrincipalId)"
-                    UserId = $assignment.PrincipalId
-                    RoleName = if ($role) { $role.DisplayName } else { "Unknown Role" }
-                    RoleDefinitionId = $assignment.RoleDefinitionId
-                    RoleScope = "Unknown"
-                    AssignmentType = "Error"
-                    AssignedDateTime = $assignment.CreatedDateTime
-                    UserEnabled = $null
-                    #LastSignIn = $null
-                    Scope = $assignment.DirectoryScopeId
-                    AssignmentId = $assignment.Id
-                    #AuthenticationType = "Certificate"
-                    PrincipalType = "Error"
-                    OnPremisesSyncEnabled = $principalInfo.OnPremisesSyncEnabled
-                    PIMStartDateTime = $null
-                    PIMEndDateTime = $null
-                }
-            }
-        } #>
         
         Write-Host "✓ Power Platform Azure AD role audit completed. Found $($results.Count) role assignments (including PIM)" -ForegroundColor Green
         
@@ -901,5 +833,23 @@ function Get-PowerPlatformAzureADRoleAudit {
     }
     
     return $results
+
+    <#
+    .DESCRIPTION
+    This function audits Power Platform Azure AD roles and assignments, providing detailed insights into role usage, principal types, and assignment types.
+    .PARAMETER TenantId
+    The Azure AD tenant ID to connect to.
+    .PARAMETER ClientId
+    The client ID of the Azure AD application used for authentication.
+    .PARAMETER CertificateThumbprint
+    The thumbprint of the certificate used for authentication.
+    .PARAMETER IncludeAzureADRoles
+    Include overarching Azure AD roles in the audit (e.g., Global Administrator, Security Administrator).
+    .EXAMPLE
+    Get-PowerPlatformAzureADRoleAudit -TenantId "your-tenant-id" -ClientId "your-client-id" -CertificateThumbprint "your-cert-thumbprint"
+    Retrieves all Power Platform Azure AD roles and assignments, including overarching Azure AD roles, for the specified tenant using certificate authentication.
+    .NOTES
+    You can optionally set the application credential using Set-M365AuditCredentials. The app credentials will be saved for subsequent calls.
+    #>
 }
 

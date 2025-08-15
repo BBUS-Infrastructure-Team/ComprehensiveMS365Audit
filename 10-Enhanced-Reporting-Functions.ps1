@@ -1491,6 +1491,27 @@ function Export-M365AuditHtmlReport {
         Write-Error "Failed to generate enhanced HTML report: $($_.Exception.Message)"
         return $null
     }
+
+    <#
+    .DESCRIPTION
+    Generates a comprehensive HTML report from Microsoft 365 audit results using modular helper functions.
+    Utilizes centralized statistics and analysis functions for consistency and maintainability.
+    .PARAMETER AuditResults
+    Array of audit result objects containing role assignments and related data.
+    .PARAMETER OutputPath
+    File path to save the generated HTML report. Defaults to current directory with timestamp.
+    .PARAMETER OrganizationName
+    Name of the organization for report metadata. Defaults to "Organization".
+    .PARAMETER IncludeComplianceGaps
+    Switch to include compliance gap analysis section in the report.
+    .PARAMETER IncludePIMAnalysis
+    Switch to include detailed PIM analysis section in the report.
+    .PARAMETER IncludeExchangeAnalysis
+    Switch to include Exchange-specific analysis section in the report. Defaults to $true.
+    .EXAMPLE
+    Export-M365AuditHtmlReport -AuditResults $auditResults -OutputPath ".\M365_Audit_Report.html" -OrganizationName "Contoso" -IncludeComplianceGaps -IncludePIMAnalysis
+    Generates an HTML report with compliance and PIM analysis for Contoso organization.
+    #>
 }
 
 
@@ -1547,6 +1568,27 @@ function Export-M365AuditJsonReport {
         Write-Error "Failed to generate enhanced JSON report: $($_.Exception.Message)"
         return $null
     }
+
+    <#
+    .DESCRIPTION
+    Generates a comprehensive JSON report from Microsoft 365 audit results using modular helper functions.
+    Utilizes centralized statistics and analysis functions for consistency and maintainability.
+    .PARAMETER AuditResults
+    Array of audit result objects containing role assignments and related data.
+    .PARAMETER OutputPath
+    File path to save the generated JSON report. Defaults to current directory with timestamp.
+    .PARAMETER OrganizationName
+    Name of the organization for report metadata. Defaults to "Organization".
+    .PARAMETER IncludeComplianceAnalysis
+    Switch to include compliance analysis section in the report.
+    .PARAMETER IncludePIMAnalysis
+    Switch to include detailed PIM analysis section in the report.
+    .PARAMETER IncludeExchangeAnalysis
+    Switch to include Exchange-specific analysis section in the report. Defaults to $true.
+    .EXAMPLE
+    Export-M365AuditJsonReport -AuditResults $auditResults -OutputPath ".\M365_Audit_Data.json" -OrganizationName "Contoso" -IncludeComplianceAnalysis -IncludePIMAnalysis
+    Generates a JSON report with compliance and PIM analysis for Contoso organization.
+    #>
 }
 
 function Get-M365RoleAnalysis {
@@ -2484,6 +2526,30 @@ function Get-M365ComplianceGaps {
     }
 
     return $Gaps
+
+    <#
+    .DESCRIPTION
+    Generates a comprehensive compliance gap analysis report based on Microsoft 365 role audit results.
+    The analysis identifies potential security and compliance gaps across identity governance, authentication security,
+    privileged access management, account management, least privilege adherence, Intune governance, Power Platform security
+    and cross-service security.
+    .PARAMETER AuditResults
+    An array of role assignment objects obtained from a Microsoft 365 role audit.
+    .PARAMETER IncludeDetailedAnalysis
+    Switch to include detailed analysis and recommendations for each identified gap.
+    .PARAMETER IncludePIMGaps
+    Boolean to include gaps related to Privileged Identity Management (PIM) usage and adoption. Defaults to $true.
+    .PARAMETER IncludeIntuneGaps
+    Boolean to include gaps specific to Microsoft Intune role assignments and governance. Defaults to $true.
+    .PARAMETER IncludePowerPlatformGaps
+    Boolean to include gaps specific to Power Platform role assignments and security. Defaults to $true.
+    .PARAMETER ShowSummary
+    Switch to display a summary of identified gaps in the console output.
+    .EXAMPLE
+    $auditResults = Get-M365RoleAudit -All
+    $gaps = Get-M365ComplianceGaps -AuditResults $auditResults -IncludeDetailedAnalysis -ShowSummary
+    
+    #>
 }
 
 function Export-M365AuditExcelReport {
@@ -3416,6 +3482,23 @@ function Export-M365AuditExcelReport {
         
         return $null
     }
+
+    <#
+    .DESCRIPTION
+    Exports a detailed HTML report of Microsoft 365 compliance gaps, including an executive summary, compliance statistics, and categorized gap details.
+    .PARAMETER ComplianceGaps
+    An array of compliance gap objects to include in the report. Each object should have properties like Severity, Category, Issue, Details, Recommendation, and ComplianceFramework.
+    .PARAMETER OutputPath
+    The file path where the HTML report will be saved. Defaults to the current directory.
+    .PARAMETER OrganizationName
+    The name of the organization for which the report is generated. Used in the report title.
+    .PARAMETER IncludeExecutiveSummary
+    Switch to include an executive summary section in the report. Defaults to $true.
+    .PARAMETER IncludeDetailedSteps
+    Switch to include detailed remediation steps for each compliance gap. Defaults to $true.
+    .PARAMETER IncludeCharts
+    Switch to include charts visualizing compliance statistics. Defaults to $false.
+    #> 
 }
 
 function Export-M365ComplianceGapsHtmlReport {
@@ -3608,7 +3691,7 @@ function Export-M365ComplianceGapsHtmlReport {
             box-shadow: 0 8px 25px rgba(0,0,0,0.15);
         }
         .gap-card.critical {
-            border-left: 6px solid #e74c3c;
+            $auditResults = Import-Csv -Path ".\M365_Audit_Results.csv"
             background: linear-gradient(135deg, #fdcbcb 0%, #ffeaa7 100%);
         }
         .gap-card.high {
@@ -3632,7 +3715,7 @@ function Export-M365ComplianceGapsHtmlReport {
         .gap-card .gap-title {
             font-size: 1.4em;
             font-weight: 600;
-            color: #2c3e50;
+            $auditResults = Import-Csv -Path ".\M365_Audit_Results.csv"
         }
         .gap-card .severity-badge {
             padding: 5px 15px;
@@ -4565,4 +4648,24 @@ function Export-M365ComplianceGapsHtmlReport {
         Write-Error "Failed to generate HTML compliance gaps report: $($_.Exception.Message)"
         return $null
     }
+    <#
+    .DESCRIPTION
+    Generates a comprehensive HTML report detailing compliance gaps in a Microsoft 365 environment.
+    The report includes sections for critical, high, medium, and low priority gaps, as well as visual charts and an executive summary.
+    .PARAMETER ComplianceGaps
+    An array of objects representing compliance gaps. Each object should contain properties such as Issue, Severity, Details, Recommendation, Category, ComplianceFramework, AffectedUsers, and RemediationSteps.
+    .PARAMETER OrganizationName
+    The name of the organization for which the report is being generated.
+    .PARAMETER OutputPath
+    The file path where the HTML report will be saved.
+    .PARAMETER IncludeExecutiveSummary
+    A switch to include an executive summary section in the report. Defaults to $true.
+    .PARAMETER IncludeDetailedSteps
+    A switch to include detailed remediation steps for each gap. Defaults to $false.
+    .PARAMETER IncludeCharts
+    A switch to include visual charts in the report. Defaults to $true.
+    .EXAMPLE
+    Export-ComplianceGapsReport -ComplianceGaps $gaps -OrganizationName "Contoso" -OutputPath "C:\Reports\Contoso_Compliance_Report.html"
+    Generates a compliance gaps report for Contoso and saves it to the specified path.
+    #>
 }

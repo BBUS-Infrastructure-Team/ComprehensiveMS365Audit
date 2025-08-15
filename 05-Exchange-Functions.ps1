@@ -403,4 +403,29 @@ function Get-ExchangeRoleAudit {
     }
     
     return $results
+
+    <#
+    .Description
+    Audits privileged Exchange Online roles by retrieving role assignments from both Azure AD and Exchange role groups.
+    Provides detailed assignment information including user/group details, role names, assignment types, and synchronization status for hybrid environments.
+    .PARAMETER Organization
+    The Exchange Online organization (usually your tenant domain).
+    .PARAMETER TenantId
+    (Optional) The Azure AD tenant ID for certificate authentication.
+    .PARAMETER ClientId
+    (Optional) The Azure AD application (client) ID for certificate authentication.
+    .PARAMETER CertificateThumbprint
+    (Optional) The thumbprint of the certificate used for authentication.
+    .PARAMETER Summary
+    If specified, outputs a summary of the audit results including counts and breakdowns.
+    .PARAMETER IncludeAzureADRoles
+    If specified, includes overarching Azure AD roles like "Exchange Administrator" in addition to Exchange-specific roles.
+    .EXAMPLE
+    Get-ExchangeRoleAudit -Organization "contoso.com" -Summary
+    Audits Exchange roles for the contoso.com organization and provides a summary of results.
+    .EXAMPLE
+    Get-ExchangeRoleAudit -Organization "contoso.com" -TenantId "<id>" -ClientId "<id>" -CertificateThumbprint "<thumbprint>" -IncludeAzureADRoles
+    .NOTES
+    Optional you can use Set-M365AuditCredentials to set credentials globally instead of passing each time.
+    #>
 }

@@ -363,4 +363,29 @@ function Get-SharePointRoleAudit {
     }
     
     return $results
+
+    <#
+    .DESCRIPTION
+    Retrieves SharePoint Online administrative roles and assignments, focusing on tenant-level roles only.
+    Excludes site-level permissions, Search Center admins, and Term Store access verification.
+    Optionally includes overarching Azure AD roles with -IncludeAzureADRoles switch.
+    .PARAMETER TenantUrl
+    The URL of the SharePoint admin center (e.g., https://contoso-admin.sharepoint.com).
+    .PARAMETER TenantId
+    The Azure AD tenant ID for certificate authentication.
+    .PARAMETER ClientId
+    The client ID of the Azure AD app registration for certificate authentication.
+    .PARAMETER CertificateThumbprint
+    The thumbprint of the certificate used for authentication.
+    .PARAMETER IncludeAzureADRoles
+    Switch to include overarching Azure AD roles (e.g., Global Admin) in the results.
+    .EXAMPLES
+    $roles = Get-SharePointRoleAudit -TenantUrl "https://contoso-admin.sharepoint.com" -TenantId "<tenant-id>" -ClientId "<client-id>" -CertificateThumbprint "<thumbprint>"
+    Retrieves SharePoint tenant-level administrative roles only.    
+    $roles = Get-SharePointRoleAudit -TenantUrl "https://contoso-admin.sharepoint.com" -TenantId "<tenant-id>" -ClientId "<client-id>" -CertificateThumbprint "<thumbprint>" -IncludeAzureADRoles
+    Retrieves SharePoint tenant-level administrative roles including overarching Azure AD roles.
+    .NOTES
+    Requires PnP.PowerShell and Microsoft.Graph modules.
+    Optionally you can use Set-M365AUditCredentials to set app credentials for subsequent calls.
+    #>
 }

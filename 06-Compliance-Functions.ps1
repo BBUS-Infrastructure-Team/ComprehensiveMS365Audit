@@ -303,4 +303,31 @@ function Get-PurviewRoleAudit {
     }
     
     return $results
+
+    <#
+    .DESCRIPTION
+    Get-PurviewRoleAudit audits Microsoft Purview (formerly Compliance Center) administrative roles.
+    It focuses on Purview-specific Azure AD roles and optionally includes Compliance Center role groups.
+    .PARAMETER Organization
+    The organization domain (e.g., contoso.com).
+    .PARAMETER TenantId
+    The Azure AD tenant ID (GUID).
+    .PARAMETER ClientId
+    The Azure AD application (client) ID (GUID).
+    .PARAMETER CertificateThumbprint
+    The thumbprint of the certificate used for app-only authentication.
+    .PARAMETER IncludeAzureADRoles
+    Switch to include overarching Azure AD roles (e.g., Global Admin, Security Admin) in the results.
+    .PARAMETER IncludePIM
+    Boolean to include Privileged Identity Management (PIM) assignments. Default is $true.
+    .PARAMETER IncludeComplianceCenter
+    Boolean to include Compliance Center role groups (if accessible). Default is $true.
+    .PARAMETER IncludeSummary
+    Switch to display a summary of findings after the audit completes.
+    .EXAMPLES
+    # Audit Purview roles excluding overarching Azure AD roles, including Compliance Center groups, with summary
+    Get-PurviewRoleAudit -Organization "contoso.com" -TenantId "<tenant-id>" -ClientId "<client-id>" -CertificateThumbprint "<thumbprint>" -IncludeSummary  
+    .NOTES
+    Optional you can use Set-M365AuditCredentials to set credentials globally instead of passing each time.
+    #>
 }
