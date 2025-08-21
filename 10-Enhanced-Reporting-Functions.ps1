@@ -3779,9 +3779,10 @@ function Export-M365ComplianceGapsHtmlReport {
             margin-bottom: 15px;
             font-size: 1.2em;
         }
-        .remediation-steps ol {
+        .remediation-steps ul {
             margin: 0;
             padding-left: 20px;
+            list-style-type: none;
         }
         .remediation-steps li {
             margin-bottom: 8px;
