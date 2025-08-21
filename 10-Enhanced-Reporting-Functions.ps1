@@ -4015,7 +4015,7 @@ function Export-M365ComplianceGapsHtmlReport {
                         <ol>
 "@
                 foreach ($step in $gap.RemediationSteps) {
-                    $html += "                            <li>$step</li>`n"
+                    $html += "                            <ui>$step</ui>`n"
                 }
                 $html += @"
                         </ol>
@@ -4077,7 +4077,7 @@ function Export-M365ComplianceGapsHtmlReport {
                         <ol>
 "@
                 foreach ($step in $gap.RemediationSteps) {
-                    $html += "                            <li>$step</li>`n"
+                    $html += "                            <ui>$step</ui>`n"
                 }
                 $html += @"
                         </ol>

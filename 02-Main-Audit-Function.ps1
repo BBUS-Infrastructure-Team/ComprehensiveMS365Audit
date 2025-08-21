@@ -420,7 +420,7 @@ function Get-ComprehensiveM365RoleAudit {
                     $appCatalogAdmins = $sharePointResults | Where-Object { $_.RoleName -eq "App Catalog Administrator" }
                     $uniqueSites = ($sharePointResults | Where-Object { $_.SiteTitle } | Select-Object -Unique SiteTitle).Count
                     
-                    Write-Host "  Site Collection Administrators: $($siteAdmins.Count)" -ForegroundColor White
+                 Get-ComprehensiveM365RoleAudit   Write-Host "  Site Collection Administrators: $($siteAdmins.Count)" -ForegroundColor White
                     Write-Host "  App Catalog Administrators: $($appCatalogAdmins.Count)" -ForegroundColor White
                     Write-Host "  Unique Sites with Assignments: $uniqueSites" -ForegroundColor White
                 }
