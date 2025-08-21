@@ -4012,13 +4012,13 @@ function Export-M365ComplianceGapsHtmlReport {
                 $html += @"
                     <div class="remediation-steps">
                         <h4>📋 Remediation Steps</h4>
-                        <ol>
+                        <ul>
 "@
                 foreach ($step in $gap.RemediationSteps) {
-                    $html += "                            <ui>$step</ui>`n"
+                    $html += "                            <li>$step</li>`n"
                 }
                 $html += @"
-                        </ol>
+                        </ul>
                     </div>
 "@
             }
@@ -4074,13 +4074,13 @@ function Export-M365ComplianceGapsHtmlReport {
                 $html += @"
                     <div class="remediation-steps">
                         <h4>📋 Remediation Steps</h4>
-                        <ol>
+                        <ul>
 "@
                 foreach ($step in $gap.RemediationSteps) {
-                    $html += "                            <ui>$step</ui>`n"
+                    $html += "                            <li>$step</li>`n"
                 }
                 $html += @"
-                        </ol>
+                        </ul>
                     </div>
 "@
             }
