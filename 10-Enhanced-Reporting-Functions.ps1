@@ -1,6 +1,6 @@
 # 10-Enhanced-Reporting-Functions.ps1
 # Enhanced HTML reporting function updated for comprehensive M365 audit module
-#
+# Changed
 
 function Export-M365AuditHtmlReport {
     param(
@@ -3691,7 +3691,6 @@ function Export-M365ComplianceGapsHtmlReport {
             box-shadow: 0 8px 25px rgba(0,0,0,0.15);
         }
         .gap-card.critical {
-            $auditResults = Import-Csv -Path ".\M365_Audit_Results.csv"
             background: linear-gradient(135deg, #fdcbcb 0%, #ffeaa7 100%);
         }
         .gap-card.high {
