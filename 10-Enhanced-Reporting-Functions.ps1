@@ -2740,7 +2740,7 @@ function Export-M365AuditExcelReport {
         If ($summaryCards.Count -lt 8) {
             $StartRow += 11
         } else {
-            $StartRow += ($summaryCards.Could + 3)
+            $StartRow += ($summaryCards.Count + 3)
         }
 
         # === Show Statistics ===
