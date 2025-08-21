@@ -216,6 +216,12 @@ function Get-ExchangeRoleAudit {
             
             # Check if connected to Exchange Online
             
+            # Check if the module is loaded
+            $ExoModule = Get-Module ExchangeOnlineManagement
+            if (-not $ExoModule) {
+                Import-Module ExchangeOnlineManagement
+            }
+            
             $EXOSession = Get-ConnectionInformation | Where-Object { $_.connectionUri -like "*outlook.office365.com*" -and $_.State -eq 'Connected' }
 
             if (-not $EXOSession) {
